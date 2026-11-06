@@ -45,7 +45,6 @@ import java.util.Set;
 
 import javax.swing.ImageIcon;
 import javax.swing.JButton;
-import javax.swing.JFileChooser;
 import javax.swing.JLabel;
 import javax.swing.JOptionPane;
 import javax.swing.JPanel;
@@ -63,6 +62,7 @@ import net.sf.portecle.crypto.X509CertUtil;
 import net.sf.portecle.gui.SwingHelper;
 import net.sf.portecle.gui.crypto.DViewPEM;
 import net.sf.portecle.gui.error.DThrowable;
+import uk.ngs.certwizard.gui.FilePicker;
 
 /**
  * Modal dialog to display the details of one or more X.509 certificates. The details of one certificate are displayed
@@ -763,17 +763,15 @@ public class DViewCertificate
 		}
 
 		X509Certificate cert = m_certs[m_iSelCert];
-
-		JFileChooser chooser = FileChooserFactory.getPEMFileChooser(X509CertUtil.getCertificateAlias(cert));
-		// TODO: lastdir
-		chooser.setDialogTitle(RB.getString("DViewCertificate.Save.Title"));
-		chooser.setMultiSelectionEnabled(false);
+		String basename = X509CertUtil.getCertificateAlias(cert);
 
 		try
 		{
 			DViewPEM dViewCertPem =
 			    new DViewPEM(this, MessageFormat.format(RB.getString("DViewCertificate.PemEncoding.Title"),
-			        m_iSelCert + 1, m_certs.length), cert, chooser);
+			        m_iSelCert + 1, m_certs.length), cert,
+			        owner -> FilePicker.saveFile(owner, RB.getString("DViewCertificate.Save.Title"),
+			            RB.getString("DViewPEM.jbSave.text"), FileChooserFactory.getPEMFilter(), basename));
 			dViewCertPem.setLocationRelativeTo(this);
 			SwingHelper.showAndWait(dViewCertPem);
 		}

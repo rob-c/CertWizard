@@ -205,13 +205,11 @@ public class GetBootstrapDir extends javax.swing.JDialog {
     }// </editor-fold>//GEN-END:initComponents
 
     private void browseButtonActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_browseButtonActionPerformed
-        JFileChooser jf = new JFileChooser(); // does not necessarily use 'user.home'
-        jf.setFileSelectionMode(JFileChooser.DIRECTORIES_ONLY);
-        jf.setFileHidingEnabled(false);
-        jf.setDialogTitle("Select folder");
-        int returnVal = jf.showOpenDialog(null);
-        if (returnVal == JFileChooser.APPROVE_OPTION) {
-            this.bootDir = jf.getSelectedFile().toPath();
+        // Start in the folder holding the current choice (usually home, holding .ca)
+        Path current = this.bootDir == null ? null : this.bootDir.toAbsolutePath().getParent();
+        File selected = FilePicker.chooseDirectory(this, "Select folder", current == null ? null : current.toFile());
+        if (selected != null) {
+            this.bootDir = selected.toPath();
             this.setLabelText();
             this.jTextField1.setText(bootDir.toString());
         }

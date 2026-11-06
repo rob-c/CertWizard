@@ -36,6 +36,7 @@ import java.util.regex.Pattern;
 import javax.swing.Icon;
 import javax.swing.ImageIcon;
 import javax.swing.JFileChooser;
+import javax.swing.filechooser.FileNameExtensionFilter;
 import javax.swing.filechooser.FileView;
 
 import net.sf.portecle.crypto.KeyStoreType;
@@ -355,6 +356,73 @@ import net.sf.portecle.gui.FileExtFilter;
 		chooser.setFileFilter(extFilter);
 		chooser.setFileView(new PortecleFileView());
 		return chooser;
+	}
+
+	/**
+	 * Get an extension filter for X.509 Certificate files. The first extension is the default for new files.
+	 *
+	 * @return extension filter
+	 */
+	public static FileNameExtensionFilter getX509Filter()
+	{
+		return new FileNameExtensionFilter(X509_FILE_DESC, X509_EXTS);
+	}
+
+	/**
+	 * Get an extension filter for PKCS #7 Certificate files. The first extension is the default for new files.
+	 *
+	 * @return extension filter
+	 */
+	public static FileNameExtensionFilter getPkcs7Filter()
+	{
+		return new FileNameExtensionFilter(PKCS7_FILE_DESC, PKCS7_EXTS);
+	}
+
+	/**
+	 * Get an extension filter for PkiPath Certificate files. The first extension is the default for new files.
+	 *
+	 * @return extension filter
+	 */
+	public static FileNameExtensionFilter getPkiPathFilter()
+	{
+		return new FileNameExtensionFilter(PKIPATH_FILE_DESC, PKIPATH_EXTS);
+	}
+
+	/**
+	 * Get an extension filter for PKCS #12 files. The first extension is the default for new files.
+	 *
+	 * @return extension filter
+	 */
+	public static FileNameExtensionFilter getPkcs12Filter()
+	{
+		Set<String> exts = KeyStoreType.PKCS12.getFilenameExtensions();
+		String[] extensions = exts.toArray(new String[exts.size()]);
+		String desc =
+		    MessageFormat.format(RB.getString("FileChooseFactory.KeyStoreFiles.PKCS12"), toWildcards(extensions));
+		return new FileNameExtensionFilter(desc, extensions);
+	}
+
+	/**
+	 * Get an extension filter for PEM files.
+	 *
+	 * @return extension filter
+	 */
+	public static FileNameExtensionFilter getPEMFilter()
+	{
+		return new FileNameExtensionFilter(PEM_FILE_DESC, PEM_EXT);
+	}
+
+	/**
+	 * Get an extension filter for PKCS #12 and PEM files.
+	 *
+	 * @return extension filter
+	 */
+	public static FileNameExtensionFilter getKeyPairFilter()
+	{
+		LinkedHashSet<String> exts = new LinkedHashSet<>();
+		exts.addAll(KeyStoreType.PKCS12.getFilenameExtensions());
+		exts.add(PEM_EXT);
+		return new FileNameExtensionFilter(KEYPAIR_FILE_DESC, exts.toArray(new String[exts.size()]));
 	}
 
 	/**

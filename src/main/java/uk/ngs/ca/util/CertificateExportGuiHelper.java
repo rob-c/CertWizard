@@ -33,6 +33,7 @@ import org.bouncycastle.openssl.PEMEncryptor;
 import org.bouncycastle.openssl.jcajce.JcaPEMWriter;
 import org.bouncycastle.openssl.jcajce.JcePEMEncryptorBuilder;
 import uk.ngs.ca.certificate.management.ClientKeyStoreCaServiceWrapper;
+import uk.ngs.certwizard.gui.FilePicker;
 
 import javax.swing.*;
 import java.awt.*;
@@ -665,18 +666,8 @@ public class CertificateExportGuiHelper {
      * @see FPortecle#chooseExportPKCS12File(java.lang.String)
      */
     private File chooseExportPKCS12File(String basename) {
-        JFileChooser chooser = FileChooserFactory.getPkcs12FileChooser(basename);
-        File fLastDir = m_lastDir.getLastDir();
-        if (fLastDir != null) {
-            chooser.setCurrentDirectory(fLastDir);
-        }
-        chooser.setDialogTitle(RB.getString("FPortecle.ExportKeyCertificates.Title"));
-        chooser.setMultiSelectionEnabled(false);
-        int iRtnValue = chooser.showDialog(parentCompoent, RB.getString("FPortecle.Export.button"));
-        if (iRtnValue == JFileChooser.APPROVE_OPTION) {
-            return chooser.getSelectedFile();
-        }
-        return null;
+        return FilePicker.saveFile(parentCompoent, RB.getString("FPortecle.ExportKeyCertificates.Title"),
+                RB.getString("FPortecle.Export.button"), FileChooserFactory.getPkcs12Filter(), basename);
     }
 
     /**
@@ -687,18 +678,8 @@ public class CertificateExportGuiHelper {
      * @see FPortecle#chooseExportPKCS7File(java.lang.String)
      */
     private File chooseExportPKCS7File(String basename) {
-        JFileChooser chooser = FileChooserFactory.getPkcs7FileChooser(basename);
-        File fLastDir = m_lastDir.getLastDir();
-        if (fLastDir != null) {
-            chooser.setCurrentDirectory(fLastDir);
-        }
-        chooser.setDialogTitle(RB.getString("FPortecle.ExportCertificates.Title"));
-        chooser.setMultiSelectionEnabled(false);
-        int iRtnValue = chooser.showDialog(parentCompoent, RB.getString("FPortecle.Export.button"));
-        if (iRtnValue == JFileChooser.APPROVE_OPTION) {
-            return chooser.getSelectedFile();
-        }
-        return null;
+        return FilePicker.saveFile(parentCompoent, RB.getString("FPortecle.ExportCertificates.Title"),
+                RB.getString("FPortecle.Export.button"), FileChooserFactory.getPkcs7Filter(), basename);
     }
 
     /**
@@ -709,18 +690,8 @@ public class CertificateExportGuiHelper {
      * @see FPortecle#chooseExportPEMFile(java.lang.String)
      */
     private File chooseExportPEMFile(String basename) {
-        JFileChooser chooser = FileChooserFactory.getPEMFileChooser(basename);
-        File fLastDir = m_lastDir.getLastDir();
-        if (fLastDir != null) {
-            chooser.setCurrentDirectory(fLastDir);
-        }
-        chooser.setDialogTitle(RB.getString("FPortecle.ExportKeyCertificates.Title"));
-        chooser.setMultiSelectionEnabled(false);
-        int iRtnValue = chooser.showDialog(parentCompoent, RB.getString("FPortecle.Export.button"));
-        if (iRtnValue == JFileChooser.APPROVE_OPTION) {
-            return chooser.getSelectedFile();
-        }
-        return null;
+        return FilePicker.saveFile(parentCompoent, RB.getString("FPortecle.ExportKeyCertificates.Title"),
+                RB.getString("FPortecle.Export.button"), FileChooserFactory.getPEMFilter(), basename);
     }
 
     /**
@@ -731,18 +702,8 @@ public class CertificateExportGuiHelper {
      * @see FPortecle#chooseExportPkiPathFile(java.lang.String)
      */
     private File chooseExportPkiPathFile(String basename) {
-        JFileChooser chooser = FileChooserFactory.getPkiPathFileChooser(basename);
-        File fLastDir = m_lastDir.getLastDir();
-        if (fLastDir != null) {
-            chooser.setCurrentDirectory(fLastDir);
-        }
-        chooser.setDialogTitle(RB.getString("FPortecle.ExportCertificates.Title"));
-        chooser.setMultiSelectionEnabled(false);
-        int iRtnValue = chooser.showDialog(parentCompoent, RB.getString("FPortecle.Export.button"));
-        if (iRtnValue == JFileChooser.APPROVE_OPTION) {
-            return chooser.getSelectedFile();
-        }
-        return null;
+        return FilePicker.saveFile(parentCompoent, RB.getString("FPortecle.ExportCertificates.Title"),
+                RB.getString("FPortecle.Export.button"), FileChooserFactory.getPkiPathFilter(), basename);
     }
 
     /**
@@ -753,18 +714,8 @@ public class CertificateExportGuiHelper {
      * @see FPortecle#chooseExportCertFile(java.lang.String)
      */
     private File chooseExportCertFile(String basename) {
-        JFileChooser chooser = FileChooserFactory.getX509FileChooser(basename);
-        File fLastDir = m_lastDir.getLastDir();
-        if (fLastDir != null) {
-            chooser.setCurrentDirectory(fLastDir);
-        }
-        chooser.setDialogTitle(RB.getString("FPortecle.ExportCertificate.Title"));
-        chooser.setMultiSelectionEnabled(false);
-        int iRtnValue = chooser.showDialog(parentCompoent, RB.getString("FPortecle.Export.button"));
-        if (iRtnValue == JFileChooser.APPROVE_OPTION) {
-            return chooser.getSelectedFile();
-        }
-        return null;
+        return FilePicker.saveFile(parentCompoent, RB.getString("FPortecle.ExportCertificate.Title"),
+                RB.getString("FPortecle.Export.button"), FileChooserFactory.getX509Filter(), basename);
     }
 
     /**
@@ -776,6 +727,10 @@ public class CertificateExportGuiHelper {
      * @see FPortecle#confirmOverwrite(java.io.File, java.lang.String)
      */
     private boolean confirmOverwrite(File file, String title) {
+        // The native save panel has already asked the user about replacing it
+        if (FilePicker.isOverwriteConfirmed(file)) {
+            return false;
+        }
         if (file.isFile()) {
             String sMessage
                     = MessageFormat.format(RB.getString("FPortecle.OverWriteFile.message"), file.getName());
