@@ -19,21 +19,15 @@
 
 package uk.ngs.ca.certificate.client;
 
-import org.restlet.Client;
-import org.restlet.Request;
-import org.restlet.Response;
-import org.restlet.data.Header;
-import org.restlet.data.Method;
-import org.restlet.data.Reference;
-import org.restlet.data.Status;
-import org.restlet.ext.xml.DomRepresentation;
-import org.restlet.util.Series;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.w3c.dom.Document;
 import org.w3c.dom.Element;
 import org.w3c.dom.Node;
 import org.w3c.dom.NodeList;
-import uk.ngs.ca.common.ClientHostName;
-import uk.ngs.ca.common.RestletClient;
+import uk.ngs.ca.common.CaHttpClient;
+import uk.ngs.ca.common.CaHttpRequest;
+import uk.ngs.ca.common.CaHttpResponse;
 import uk.ngs.ca.tools.property.SysProperty;
 
 import javax.xml.xpath.XPath;
@@ -46,6 +40,8 @@ import javax.xml.xpath.XPathFactory;
  */
 public class CAMotd {
 
+    private static final Logger logger = LogManager.getLogger(CAMotd.class);
+
     public CAMotd() {
     }
 
@@ -53,18 +49,8 @@ public class CAMotd {
         String text = null;
         try {
             String csrURL = SysProperty.getValue("uk.ngs.ca.request.ca.motd.text.url");
-            Client c = RestletClient.getClient();
-
-            Request request = new Request(Method.GET, new Reference(csrURL));
-
-            Series<Header> headers = request.getHeaders();
-            headers.set("LocalHost", ClientHostName.getHostName());
-            org.restlet.data.ClientInfo info = new org.restlet.data.ClientInfo();
-            info.setAgent(SysProperty.getValue("uk.ngs.ca.request.useragent"));
-            request.setClientInfo(info);
-
-            Response response = c.handle(request);
-            Document document = new DomRepresentation(response.getEntity()).getDocument(); //response.getEntityAsDom().getDocument();
+            CaHttpResponse response = CaHttpClient.getDefault().send(CaHttpRequest.get(csrURL).build());
+            Document document = response.getBodyAsXml();
 
             XPath xpath = XPathFactory.newInstance().newXPath();
             XPathExpression expr = xpath.compile("/CA/Motd/text");
@@ -72,10 +58,9 @@ public class CAMotd {
             text = (String) expr.evaluate(document, XPathConstants.STRING);
 
         } catch (Exception ep) {
-            ep.printStackTrace();
-        } finally {
-            return text;
+            logger.warn("Could not fetch the message of the day: " + ep.getMessage());
         }
+        return text;
     }
 
     /**
@@ -88,22 +73,12 @@ public class CAMotd {
         String latestVersion = "0.0.0";
         try {
             String csrURL = SysProperty.getValue("uk.ngs.ca.request.ca.url");
-            Client c = RestletClient.getClient();
-            Request request = new Request(Method.GET, new Reference(csrURL));
-
-            Series<Header> headers = request.getHeaders();
-            headers.set("LocalHost", ClientHostName.getHostName());
-            org.restlet.data.ClientInfo info = new org.restlet.data.ClientInfo();
-            info.setAgent(SysProperty.getValue("uk.ngs.ca.request.useragent"));
-            request.setClientInfo(info);
-
-            Response response = c.handle(request);
-            //response.getStatus().
-            if (!response.getStatus().equals(Status.SUCCESS_OK)) {
+            CaHttpResponse response = CaHttpClient.getDefault().send(CaHttpRequest.get(csrURL).build());
+            if (response.getStatusCode() != 200) {
                 return "0.0.0";
             }
 
-            Document document = new DomRepresentation(response.getEntity()).getDocument(); //response.getEntityAsDom().getDocument();
+            Document document = response.getBodyAsXml();
             // transform the Document into a String
             document.getDocumentElement().normalize();
             NodeList nodeLst = document.getElementsByTagName("certWizard");
@@ -123,9 +98,8 @@ public class CAMotd {
             }
 
         } catch (Exception ep) {
-            ep.printStackTrace();
-        } finally {
-            return latestVersion;
+            logger.warn("Could not fetch the latest CertWizard version: " + ep.getMessage());
         }
+        return latestVersion;
     }
 }

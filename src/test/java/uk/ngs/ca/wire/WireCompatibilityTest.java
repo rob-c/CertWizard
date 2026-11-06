@@ -383,6 +383,16 @@ public class WireCompatibilityTest {
         assertEquals(1, server.getCaptured().size());
     }
 
+    /** XML escaping and UTF-8 encoding of free text typed by the user. */
+    @Test
+    public void revokeReasonWithSpecialCharacters() throws Exception {
+        server.enqueue(new Reply(500, "Internal Server Error"));
+        RevokeRequest revoke = new RevokeRequest(TestKeyMaterial.authKey(), 4242L,
+                "Key <compromised> & \"stolen\" 'laptop' café £€\nsecond line\tend");
+        assertFalse(revoke.doPosts());
+        GoldenFixture.check("revoke-special-chars", server.getCaptured(), false);
+    }
+
     // ------------------------------------------------------------------ helpers
 
     private static Reply ok(String xml) {

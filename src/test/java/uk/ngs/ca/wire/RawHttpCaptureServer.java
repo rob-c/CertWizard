@@ -56,10 +56,18 @@ public final class RawHttpCaptureServer implements AutoCloseable {
         final String reason;
         final Map<String, String> headers = new LinkedHashMap<>();
         byte[] body = new byte[0];
+        boolean drop;
 
         public Reply(int status, String reason) {
             this.status = status;
             this.reason = reason;
+        }
+
+        /** Read the request, then close the connection without answering. */
+        public static Reply dropConnection() {
+            Reply r = new Reply(0, null);
+            r.drop = true;
+            return r;
         }
 
         public Reply header(String name, String value) {
@@ -161,6 +169,9 @@ public final class RawHttpCaptureServer implements AutoCloseable {
                 Reply reply = script.poll();
                 if (reply == null) {
                     reply = new Reply(404, "Not Found");
+                }
+                if (reply.drop) {
+                    return;
                 }
                 boolean close = "close".equalsIgnoreCase(find(headers, "Connection"));
                 writeReply(out, reply, close);

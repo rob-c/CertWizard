@@ -73,6 +73,42 @@ public class SysProperty {
     }
 
     /**
+     * Returns an optional property value.
+     *
+     * @param key          property key
+     * @param defaultValue returned when the key is absent or blank
+     * @return value of the key, or the default
+     */
+    public static String getValue(String key, String defaultValue) {
+        if (!SysProperty.isInitialized) {
+            SysProperty.init();
+        }
+        String value = properties.getProperty(key);
+        return value == null || value.trim().isEmpty() ? defaultValue : value.trim();
+    }
+
+    /**
+     * Returns an optional integer property value.
+     *
+     * @param key          property key
+     * @param defaultValue returned when the key is absent, blank or not an
+     *                     integer
+     * @return value of the key, or the default
+     */
+    public static int getInt(String key, int defaultValue) {
+        String value = getValue(key, null);
+        if (value == null) {
+            return defaultValue;
+        }
+        try {
+            return Integer.parseInt(value);
+        } catch (NumberFormatException e) {
+            myLogger.warn("[SysProperty] ignoring non-integer value '" + value + "' for " + key);
+            return defaultValue;
+        }
+    }
+
+    /**
      * Create the truststore.jks file on disk (typically under
      * '$USER_HOME/.ca/truststore.jks' unless otherwise specified in the
      * configure.properties file). This KeyStore is used to establish SSL with

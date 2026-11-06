@@ -20,15 +20,10 @@ package uk.ngs.ca.certificate;
 
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
-import org.restlet.Response;
-import org.restlet.data.Status;
 import org.w3c.dom.Document;
 import org.w3c.dom.Node;
 import org.w3c.dom.NodeList;
-import org.xml.sax.InputSource;
-
-import javax.xml.parsers.DocumentBuilderFactory;
-import java.io.StringReader;
+import uk.ngs.ca.common.CaHttpResponse;
 
 /**
  * Common utility methods for processing CSR new and renew requests.
@@ -43,16 +38,14 @@ public class OnlineCertUtil {
      * Try and parse the server error response XML doc (if any) and return a
      * message.
      */
-    public static String getServerErrorMessage(Response response) {
-        if (response.getStatus().equals(Status.SUCCESS_ACCEPTED)) {
+    public static String getServerErrorMessage(CaHttpResponse response) {
+        int status = response.getStatusCode();
+        if (status == 202) {
             // 202 - This means that the server understood the request, but 
             // there were errors/problems. In this scenario, the server sends 
             // back an XML document that wraps the cause. 
             try {
-                String xmlResponse = response.getEntityAsText();
-                DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
-                InputSource source = new InputSource(new StringReader(xmlResponse));
-                Document responseDoc = factory.newDocumentBuilder().parse(source);
+                Document responseDoc = response.getBodyAsXml();
                 if (responseDoc != null) {
                     NodeList allTextNodes = responseDoc.getElementsByTagName("text");
                     if (allTextNodes != null) {
@@ -65,13 +58,13 @@ public class OnlineCertUtil {
             } catch (Exception ex) {
                 logger.warn("Could not parse server error response XML doc", ex);
             }
-        } else if (response.getStatus().equals(Status.CLIENT_ERROR_NOT_FOUND)) {
+        } else if (status == 404) {
             //404
             return "There is no such service. Please check system configure file.";
-        } else if (response.getStatus().equals(Status.CLIENT_ERROR_FORBIDDEN)) {
+        } else if (status == 403) {
             //403
             return "Failed authentication. Please contact the helpdesk";
-        } else if (response.getStatus().equals(Status.CLIENT_ERROR_METHOD_NOT_ALLOWED)) {
+        } else if (status == 405) {
             //405
             return "Server does not support POST.";
         } else {

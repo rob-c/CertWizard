@@ -18,23 +18,14 @@
  */
 package uk.ngs.ca.info;
 
-import org.restlet.Client;
-import org.restlet.Request;
-import org.restlet.Response;
-import org.restlet.data.ClientInfo;
-import org.restlet.data.Header;
-import org.restlet.data.Method;
-import org.restlet.data.Reference;
-import org.restlet.util.Series;
 import org.w3c.dom.Document;
 import org.w3c.dom.Element;
 import org.w3c.dom.NodeList;
-import org.xml.sax.SAXException;
-import uk.ngs.ca.common.ClientHostName;
-import uk.ngs.ca.common.RestletClient;
+import uk.ngs.ca.common.CaHttpClient;
+import uk.ngs.ca.common.CaHttpRequest;
+import uk.ngs.ca.common.CaHttpResponse;
 import uk.ngs.ca.tools.property.SysProperty;
 
-import javax.xml.parsers.ParserConfigurationException;
 import javax.xml.xpath.*;
 import java.io.IOException;
 import java.util.ArrayList;
@@ -57,31 +48,17 @@ public class CAInfo {
      * @throws IOException If the remote call to fetch the RA list fails
      */
     public CAInfo() throws IOException {
-        Client c = RestletClient.getClient();
-
-        Request request = new Request(Method.GET, new Reference(CAURL));
-
-        Series<Header> headers = request.getHeaders();
-        headers.set("PPPK", "this is pppk");
-        headers.set("LocalHost", ClientHostName.getHostName());
-
-        //by calling clientinfo to change standard header
-        ClientInfo info = new ClientInfo();
-
-        info.setAgent(SysProperty.getValue("uk.ngs.ca.request.useragent"));
-
-        request.setClientInfo(info);
-        Response response = c.handle(request);
+        CaHttpRequest request = CaHttpRequest.get(CAURL)
+                .header("PPPK", "this is pppk")
+                .build();
+        CaHttpResponse response = CaHttpClient.getDefault().send(request);
+        if (response.getStatusCode() != 200) {
+            throw new IOException("Could not fetch the RA list: the CA server responded "
+                    + response.getStatusDescription());
+        }
         try {
-            String responseValue = response.getEntity().getText();
-            javax.xml.parsers.DocumentBuilderFactory dbf = javax.xml.parsers.DocumentBuilderFactory.newInstance();
-            javax.xml.parsers.DocumentBuilder db = dbf.newDocumentBuilder();
-            org.xml.sax.InputSource is = new org.xml.sax.InputSource();
-            is.setCharacterStream(new java.io.StringReader(responseValue));
-            document = db.parse(is);
-        } catch (ParserConfigurationException ex) {
-            throw new IllegalStateException(ex);  // coding error 
-        } catch (SAXException ex) {
+            document = response.getBodyAsXml();
+        } catch (IOException ex) {
             throw new IllegalStateException("Could not parse CAInfo response", ex); // coding error
         }
     }

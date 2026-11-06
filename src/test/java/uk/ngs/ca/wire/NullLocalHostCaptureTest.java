@@ -19,20 +19,16 @@
 package uk.ngs.ca.wire;
 
 import org.junit.Test;
-import org.restlet.Client;
-import org.restlet.Request;
-import org.restlet.data.Header;
-import org.restlet.data.Method;
-import org.restlet.data.Reference;
-import org.restlet.util.Series;
-import uk.ngs.ca.common.RestletClient;
+import uk.ngs.ca.common.CaHttpClient;
+import uk.ngs.ca.common.CaHttpRequest;
 import uk.ngs.ca.tools.property.SysProperty;
 
 /**
  * {@code ClientHostName.getHostName()} returns null when the local host name
- * cannot be resolved. This records what the original implementation put on
- * the wire in that case, using exactly the header-setting code the client
- * classes used, so the replacement can be held to the same behaviour.
+ * cannot be resolved. The fixture records what the original Restlet
+ * implementation put on the wire in that case (an empty "LocalHost:"
+ * header); this drives the same header-setting call that
+ * {@link CaHttpRequest#get(String)} makes with a null host name.
  */
 public class NullLocalHostCaptureTest {
 
@@ -41,14 +37,10 @@ public class NullLocalHostCaptureTest {
         RawHttpCaptureServer server = SharedCaptureServer.get();
         server.enqueue(new RawHttpCaptureServer.Reply(200, "OK"));
 
-        Client client = RestletClient.getClient();
-        Request request = new Request(Method.GET, new Reference(SysProperty.getValue("uk.ngs.ca.request.pingservice.url")));
-        Series<Header> headers = request.getHeaders();
-        headers.set("LocalHost", null);
-        org.restlet.data.ClientInfo info = new org.restlet.data.ClientInfo();
-        info.setAgent(SysProperty.getValue("uk.ngs.ca.request.useragent"));
-        request.setClientInfo(info);
-        client.handle(request);
+        CaHttpRequest request = CaHttpRequest.get(SysProperty.getValue("uk.ngs.ca.request.pingservice.url"))
+                .header("LocalHost", null)
+                .build();
+        CaHttpClient.getDefault().send(request);
 
         GoldenFixture.check("null-localhost", server.getCaptured(), false);
     }

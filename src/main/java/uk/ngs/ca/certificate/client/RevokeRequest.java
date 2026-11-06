@@ -18,20 +18,17 @@
  */
 package uk.ngs.ca.certificate.client;
 
-import org.restlet.Client;
-import org.restlet.Request;
-import org.restlet.Response;
-import org.restlet.data.*;
-import org.restlet.ext.xml.DomRepresentation;
-import org.restlet.representation.Representation;
-import org.restlet.util.Series;
 import org.w3c.dom.Document;
 import org.w3c.dom.Element;
 import uk.ngs.ca.certificate.OnlineCertUtil;
-import uk.ngs.ca.common.ClientHostName;
-import uk.ngs.ca.common.RestletClient;
+import uk.ngs.ca.common.CaHttpClient;
+import uk.ngs.ca.common.CaHttpException;
+import uk.ngs.ca.common.CaHttpRequest;
+import uk.ngs.ca.common.CaHttpResponse;
+import uk.ngs.ca.common.SafeXml;
 import uk.ngs.ca.tools.property.SysProperty;
 
+import java.io.IOException;
 import java.math.BigInteger;
 import java.security.PrivateKey;
 import java.util.Date;
@@ -45,7 +42,6 @@ import static uk.ngs.ca.common.CertUtil.getPrivateExponent;
 public class RevokeRequest {
 
     private final String REVOKEURL = SysProperty.getValue("uk.ngs.ca.request.revoke.url");
-    private final String USERAGENT = SysProperty.getValue("uk.ngs.ca.request.useragent");
     private long cert_id = -1;
     private String reason = null;
     private String MESSAGE = null;
@@ -62,38 +58,37 @@ public class RevokeRequest {
     }
 
     public boolean doPosts() {
-        Client client = RestletClient.getClient();
+        CaHttpRequest request = CaHttpRequest.post(REVOKEURL)
+                .xmlBody(getRepresentation())
+                .header("PPPK", "this is pppk")
+                .build();
 
-        Request request = new Request(Method.POST, new Reference(REVOKEURL), getRepresentation());
+        CaHttpResponse response;
+        try {
+            response = CaHttpClient.getDefault().send(request);
+        } catch (IOException ex) {
+            this.MESSAGE = CaHttpException.challengeFailureMessage("revocation request", ex);
+            return false;
+        }
 
-        Series<Header> headerz = request.getHeaders();
-        headerz.set("LocalHost", ClientHostName.getHostName());
-        headerz.set("PPPK", "this is pppk");
-
-        ClientInfo info = new ClientInfo();
-        info.setAgent(USERAGENT);
-        request.setClientInfo(info);
-
-        Response response = client.handle(request);
-
-        Status _status = response.getStatus();
         //we will do second post
-        if (_status.equals(Status.CLIENT_ERROR_UNAUTHORIZED)) {
-            Series<Header> headers = response.getHeaders();
-            Header _realmP = headers.getFirst("realm");
-            Header _nonceP = headers.getFirst("nonce");
-            Header _keyidP = headers.getFirst("keyid");
-            Header _opaqueP = headers.getFirst("opaque");
+        if (response.getStatusCode() == 401) {
+            String _realmP = response.getHeader("realm");
+            String _nonceP = response.getHeader("nonce");
+            String _keyidP = response.getHeader("keyid");
+            String _opaqueP = response.getHeader("opaque");
 
             //we will do the response action from here.
             if (_opaqueP == null) {
-
-                String _keyid = _keyidP.getValue();
+                if (_nonceP == null || _keyidP == null) {
+                    throw new IllegalStateException("Expected nonce and keyid headers from server");
+                }
+                String _keyid = _keyidP;
                 int index = _keyid.indexOf(".");
                 String m = _keyid.substring(0, index).toUpperCase();
                 BigInteger q = getPrivateExponent(privateKey);
 
-                String _nonce = _nonceP.getValue() + ":" + new Date().getTime();
+                String _nonce = _nonceP + ":" + new Date().getTime();
                 _nonce = _nonce.toLowerCase();
                 String c = asciiToHex(_nonce);
                 c = c.toUpperCase();
@@ -103,35 +98,30 @@ public class RevokeRequest {
                 BigInteger b_response = b_c.modPow(q, b_m);
                 String _response = b_response.toString(16);
 
-                client = RestletClient.getClient();
-                request = new Request(Method.POST, new Reference(REVOKEURL), getRepresentation());
-                Series<Header> _headers = request.getHeaders();
-                _headers.set("PPPK", "this is pppk");
-                _headers.set("LocalHost", ClientHostName.getHostName());
-                _headers.set("keyid", _keyid);
-                _headers.set("realm", _realmP.getValue());
-                _headers.set("response", _response);
-                ClientInfo _info = new org.restlet.data.ClientInfo();
-                _info.setAgent(USERAGENT);
-                request.setClientInfo(_info);
+                request = CaHttpRequest.post(REVOKEURL)
+                        .xmlBody(getRepresentation())
+                        .header("PPPK", "this is pppk")
+                        .header("keyid", _keyid)
+                        .header("realm", _realmP)
+                        .header("response", _response)
+                        .build();
 
             } else {
                 //we will do cookie thing from here
-
-                client = RestletClient.getClient();
-                //please note you have to call getRepresentation() again, otherwise it will be null. Why???
-                request = new Request(Method.POST, new Reference(REVOKEURL), getRepresentation());
-                Series<Header> _headers = request.getHeaders();
-                _headers.set("PPPK", "this is pppk");
-                _headers.set("LocalHost", ClientHostName.getHostName());
-                _headers.set("opaque", _opaqueP.getValue());
-                ClientInfo _info = new ClientInfo();
-                _info.setAgent(USERAGENT);
-                request.setClientInfo(_info);
+                request = CaHttpRequest.post(REVOKEURL)
+                        .xmlBody(getRepresentation())
+                        .header("PPPK", "this is pppk")
+                        .header("opaque", _opaqueP)
+                        .build();
             }
-            response = client.handle(request);
+            try {
+                response = CaHttpClient.getDefault().send(request);
+            } catch (IOException ex) {
+                this.MESSAGE = CaHttpException.submissionFailureMessage("revocation request", ex);
+                return false;
+            }
 
-            if (response.getStatus().equals(Status.SUCCESS_CREATED)) {
+            if (response.getStatusCode() == 201) {
                 return true;   // 201
             } else {
                 this.MESSAGE = OnlineCertUtil.getServerErrorMessage(response);
@@ -147,30 +137,23 @@ public class RevokeRequest {
         }
     }
 
-    private Representation getRepresentation() {
-        DomRepresentation representation = null;
-        try {
-            String id = Long.toString(cert_id);
-            representation = new DomRepresentation(MediaType.APPLICATION_XML);
-            Document d = representation.getDocument();
+    private Document getRepresentation() {
+        String id = Long.toString(cert_id);
+        Document d = SafeXml.newDocument();
 
-            Element rootElement = d.createElement("Revoke");
-            d.appendChild(rootElement);
+        Element rootElement = d.createElement("Revoke");
+        d.appendChild(rootElement);
 
-            Element idElement = d.createElement("id");
-            Element reasonElement = d.createElement("reason");
-            idElement.appendChild(d.createTextNode(id));
-            reasonElement.appendChild(d.createTextNode(this.reason));
+        Element idElement = d.createElement("id");
+        Element reasonElement = d.createElement("reason");
+        idElement.appendChild(d.createTextNode(id));
+        reasonElement.appendChild(d.createTextNode(this.reason));
 
-            rootElement.appendChild(idElement);
-            rootElement.appendChild(reasonElement);
+        rootElement.appendChild(idElement);
+        rootElement.appendChild(reasonElement);
 
-            d.normalizeDocument();
-        } catch (Exception ep) {
-            ep.printStackTrace();
-        } finally {
-            return representation;
-        }
+        d.normalizeDocument();
+        return d;
     }
 
 }

@@ -18,18 +18,14 @@
  */
 package uk.ngs.ca.certificate;
 
-import org.restlet.Client;
-import org.restlet.Request;
-import org.restlet.Response;
-import org.restlet.data.*;
-import org.restlet.ext.xml.DomRepresentation;
-import org.restlet.representation.Representation;
-import org.restlet.util.Series;
 import org.w3c.dom.Document;
 import org.w3c.dom.Element;
-import uk.ngs.ca.common.ClientHostName;
+import uk.ngs.ca.common.CaHttpClient;
+import uk.ngs.ca.common.CaHttpException;
+import uk.ngs.ca.common.CaHttpRequest;
+import uk.ngs.ca.common.CaHttpResponse;
 import uk.ngs.ca.common.Pair;
-import uk.ngs.ca.common.RestletClient;
+import uk.ngs.ca.common.SafeXml;
 import uk.ngs.ca.tools.property.SysProperty;
 
 import java.io.IOException;
@@ -51,7 +47,6 @@ import static uk.ngs.ca.common.CertUtil.getPrivateExponent;
 public class OnlineHostCertRequest {
 
     private final String request_URL = SysProperty.getValue("uk.ngs.ca.request.bulkhost.reqid.url");
-    private final String userAgent = SysProperty.getValue("uk.ngs.ca.request.useragent");
     private final X509Certificate authCert;
     private final BigInteger exponent;
     private final String pkcs10;
@@ -87,8 +82,17 @@ public class OnlineHostCertRequest {
      * server (if any).
      */
     public Pair<Boolean, String> doHostCSR() {
-        Response response = this.doInitialRequest();
-        return this.respondToPPPKChallenge(response);
+        CaHttpResponse response;
+        try {
+            response = this.doInitialRequest();
+        } catch (IOException ex) {
+            return Pair.create(false, CaHttpException.challengeFailureMessage("host certificate request", ex));
+        }
+        try {
+            return this.respondToPPPKChallenge(response);
+        } catch (IOException ex) {
+            return Pair.create(false, CaHttpException.submissionFailureMessage("host certificate request", ex));
+        }
     }
 
     /**
@@ -96,25 +100,16 @@ public class OnlineHostCertRequest {
      *
      * @return The response
      */
-    private Response doInitialRequest() {
-        Client client = RestletClient.getClient();
-
-        Representation representation = this.getDomRepresentation();
-        Request request = new Request(Method.POST, new Reference(request_URL), representation);
-
-        Series<Header> headers = request.getHeaders();
-        // Setup initial request headers: Add the 'PPPK' header and serial
-        headers.set("PPPK", "this is pppk");
-        // Send the required auth cert serial number header 
-        headers.set("serial", this.authCert.getSerialNumber().toString());
-        headers.set("LocalHost", ClientHostName.getHostName());
-
-        // call clientinfo to change standard header
-        ClientInfo info = new ClientInfo();
-        info.setAgent(this.userAgent);
-        request.setClientInfo(info);
+    private CaHttpResponse doInitialRequest() throws IOException {
+        CaHttpRequest request = CaHttpRequest.post(request_URL)
+                .xmlBody(this.getDomRepresentation())
+                // Setup initial request headers: Add the 'PPPK' header and serial
+                .header("PPPK", "this is pppk")
+                // Send the required auth cert serial number header
+                .header("serial", this.authCert.getSerialNumber().toString())
+                .build();
         // Send reqeust to server 
-        return client.handle(request);
+        return CaHttpClient.getDefault().send(request);
     }
 
     /**
@@ -125,16 +120,14 @@ public class OnlineHostCertRequest {
      * request was processed by the server (true for success otherwise false).
      * <tt>Pair.second</tt> provides a message returned by the server (if any).
      */
-    private Pair<Boolean, String> respondToPPPKChallenge(Response response) {
-        Status status = response.getStatus();
+    private Pair<Boolean, String> respondToPPPKChallenge(CaHttpResponse response) throws IOException {
         // We expect CLIENT_ERROR_UNAUTHORIZED as the response from the intial request. 
-        if (!status.equals(Status.CLIENT_ERROR_UNAUTHORIZED)) {
+        if (response.getStatusCode() != 401) {
             return Pair.create(false, "UNAUTHORIZED");
         }
-        Series<Header> headers = response.getHeaders();
-        Header realmP = headers.getFirst("realm");
-        Header nonceP = headers.getFirst("nonce");
-        Header keyidP = headers.getFirst("keyid");
+        String realmP = response.getHeader("realm");
+        String nonceP = response.getHeader("nonce");
+        String keyidP = response.getHeader("keyid");
         //Parameter opaqueP = headers.getFirst("opaque"); // TODO don't support yet 
 
         // Check that nonceP and keyidP are returned from the server, if not we can throw 
@@ -143,11 +136,11 @@ public class OnlineHostCertRequest {
             throw new IllegalStateException("Expected nonceP and keyidP headers from server");
         }
 
-        String keyid = keyidP.getValue();
+        String keyid = keyidP;
         int index = keyid.indexOf(".");
         String m = keyid.substring(0, index).toUpperCase();
 
-        String nonce = nonceP.getValue() + ":" + new Date().getTime();
+        String nonce = nonceP + ":" + new Date().getTime();
         nonce = nonce.toLowerCase();
         String c = asciiToHex(nonce);
         c = c.toUpperCase();
@@ -156,42 +149,27 @@ public class OnlineHostCertRequest {
         BigInteger b_response = b_c.modPow(this.exponent, b_m);
         String _response = b_response.toString(16);
 
-        Client client = RestletClient.getClient();
+        CaHttpRequest request = CaHttpRequest.post(request_URL)
+                .xmlBody(this.getDomRepresentation())
+                .header("PPPK", "this is pppk")
+                .header("keyid", keyid)
+                .header("realm", realmP)
+                .header("response", _response)
+                .header("serial", this.authCert.getSerialNumber().toString())
+                .build();
+        response = CaHttpClient.getDefault().send(request);
 
-        Representation representation = this.getDomRepresentation();
-        Request request = new Request(Method.POST, new Reference(request_URL), representation);
-
-        Series<Header> newHeaders = request.getHeaders();
-        newHeaders.set("PPPK", "this is pppk");
-        newHeaders.set("LocalHost", ClientHostName.getHostName());
-        newHeaders.set("keyid", keyid);
-        newHeaders.set("realm", realmP.getValue());
-        newHeaders.set("response", _response);
-        newHeaders.set("serial", this.authCert.getSerialNumber().toString());
-
-        ClientInfo info = new ClientInfo();
-        info.setAgent(this.userAgent);
-        request.setClientInfo(info);
-        response = client.handle(request);
-
-        if (response.getStatus().equals(Status.SUCCESS_CREATED)) {
+        if (response.getStatusCode() == 201) {
             return Pair.create(true, "SUCCESS_CREATED");   // 201 
 
         } else {
             String detailError = OnlineCertUtil.getServerErrorMessage(response);
-            return Pair.create(false, detailError + " [" + response.getStatus() + "]");
+            return Pair.create(false, detailError + " [" + response.getStatusDescription() + "]");
         }
     }
 
-    private Representation getDomRepresentation() {
-        DomRepresentation representation;
-        Document d;
-        try {
-            representation = new DomRepresentation(MediaType.APPLICATION_XML);
-            d = representation.getDocument();
-        } catch (IOException ex) {
-            throw new IllegalStateException("Coding error - can't create empty dom doc", ex);
-        }
+    private Document getDomRepresentation() {
+        Document d = SafeXml.newDocument();
 
         Element rootElement = d.createElement("Bulk");
         d.appendChild(rootElement);
@@ -217,6 +195,6 @@ public class OnlineHostCertRequest {
         csrElt.appendChild(eltName);
 
         d.normalizeDocument();
-        return representation;
+        return d;
     }
 }
