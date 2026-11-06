@@ -35,6 +35,7 @@ import org.bouncycastle.openssl.jcajce.JcePEMEncryptorBuilder;
 import uk.ngs.ca.certificate.chain.CertChainBuilder;
 import uk.ngs.ca.certificate.chain.KeyStoreChains;
 import uk.ngs.ca.certificate.management.ClientKeyStoreCaServiceWrapper;
+import uk.ngs.ca.certificate.verify.ExportVerifier;
 
 import javax.swing.*;
 import java.awt.*;
@@ -43,6 +44,7 @@ import java.security.*;
 import java.security.cert.Certificate;
 import java.security.cert.X509Certificate;
 import java.text.MessageFormat;
+import java.util.List;
 import java.util.ResourceBundle;
 
 /**
@@ -244,9 +246,12 @@ public class CertificateExportGuiHelper {
             //KeyStoreUtil.saveKeyStore(newPkcs12, fExportFile, cPKCS12Password);
             fos = new FileOutputStream(fExportFile);
             newPkcs12.store(fos, newPKCS12Password);
+            fos.close();
+            fos = null;
 
             m_lastDir.updateLastDir(fExportFile);
-            return true;
+            return reportExportVerification(fExportFile, ExportVerifier.verifyPkcs12(fExportFile.toPath(),
+                    newPKCS12Password, certs, privKey instanceof PrivateKey ? (PrivateKey) privKey : null));
 
         } catch (FileNotFoundException ex) {
             String sMessage
@@ -336,10 +341,13 @@ public class CertificateExportGuiHelper {
                 pw.writeObject(cert);
             }
             pw.flush();
+            pw.close();
+            pw = null;
 
             m_lastDir.updateLastDir(fExportFile);
 
-            return true;
+            return reportExportVerification(fExportFile, ExportVerifier.verifyPem(fExportFile.toPath(),
+                    password, certs, privKey instanceof PrivateKey ? (PrivateKey) privKey : null));
         } catch (FileNotFoundException ex) {
             String sMessage
                     = MessageFormat.format(RB.getString("FPortecle.NoWriteFile.message"), fExportFile.getName());
@@ -405,8 +413,10 @@ public class CertificateExportGuiHelper {
             byte[] bEncoded = X509CertUtil.getCertsEncodedPkcs7(certChain);
             fos = new FileOutputStream(fExportFile);
             fos.write(bEncoded);
+            fos.close();
+            fos = null;
             m_lastDir.updateLastDir(fExportFile);
-            return true;
+            return reportExportVerification(fExportFile, ExportVerifier.verifyPkcs7(fExportFile.toPath(), certChain));
         } catch (FileNotFoundException ex) {
             String sMessage
                     = MessageFormat.format(RB.getString("FPortecle.NoWriteFile.message"), fExportFile.getName());
@@ -794,6 +804,24 @@ public class CertificateExportGuiHelper {
             int iSelected = JOptionPane.showConfirmDialog(parentCompoent, sMessage, title, JOptionPane.YES_NO_OPTION);
             return iSelected != JOptionPane.YES_OPTION;
         }
+        return false;
+    }
+
+    /**
+     * Report the result of reading an exported file back.
+     *
+     * @param file     the exported file
+     * @param problems problems found by {@link ExportVerifier}
+     * @return true if the file verified
+     */
+    private boolean reportExportVerification(File file, List<String> problems) {
+        if (problems.isEmpty()) {
+            return true;
+        }
+        JOptionPane.showMessageDialog(parentCompoent,
+                "The exported file\n" + file + "\nfailed verification when it was read back:\n - "
+                + String.join("\n - ", problems) + "\n\nDo not rely on this file.",
+                "Export verification FAILED", JOptionPane.ERROR_MESSAGE);
         return false;
     }
 
