@@ -260,6 +260,26 @@ public class ConnectivityMonitorTest {
     }
 
     @Test
+    public void anUnexpectedProbeErrorDoesNotWedgeTheMonitor() {
+        boolean[] blowUp = {true};
+        ConnectivityMonitor m = monitor(() -> {
+            if (blowUp[0]) {
+                throw new AssertionError("bug in probe");
+            }
+            return true;
+        });
+        try {
+            m.checkNow();
+            fail();
+        } catch (AssertionError expected) {
+            // propagated
+        }
+        assertFalse(m.getStatus().isChecking());
+        blowUp[0] = false;
+        assertTrue(m.checkNow());
+    }
+
+    @Test
     public void listenersSeeCheckingThenResult() {
         ConnectivityMonitor m = monitor();
         List<Status> seen = new ArrayList<>();

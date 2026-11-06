@@ -332,6 +332,30 @@ public class CaHttpClientRetryTest {
         assertEquals(1, hits.get());
     }
 
+    @Test
+    public void interruptDuringASlowRequestStopsPromptlyWithoutRetrying() throws Exception {
+        script.addAll(Arrays.asList(new Step(200, null, 5000), status(200)));
+        List<Throwable> outcome = Collections.synchronizedList(new ArrayList<>());
+        Thread caller = new Thread(() -> {
+            try {
+                client().send(CaHttpRequest.get(url()).build());
+            } catch (IOException e) {
+                outcome.add(e);
+            }
+        });
+        long t0 = System.nanoTime();
+        caller.start();
+        Thread.sleep(300);
+        caller.interrupt(); // what the wait dialog's Cancel button does
+        caller.join(3000);
+        assertFalse(caller.isAlive());
+        assertTrue(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - t0) < 2500);
+        assertEquals(1, outcome.size());
+        assertTrue(outcome.get(0).toString(), outcome.get(0) instanceof InterruptedIOException);
+        assertEquals(1, hits.get());
+        assertTrue(sleeper.getSleeps().isEmpty());
+    }
+
     private static String deadUrl() throws IOException {
         try (ServerSocket s = new ServerSocket(0, 1, InetAddress.getLoopbackAddress())) {
             return "http://127.0.0.1:" + s.getLocalPort() + "/CA";

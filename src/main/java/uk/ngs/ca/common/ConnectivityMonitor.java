@@ -298,11 +298,11 @@ public final class ConnectivityMonitor implements ConnectivityTracker {
                 inFlight = null;
                 record(reachable, error);
             }
+            mine.complete(reachable); // never leave concurrent callers waiting
         }
         logger.info("CA server connectivity check: " + (reachable ? "online" : "offline - " + error));
         onlineSink.accept(reachable);
         notifyListeners();
-        mine.complete(reachable);
         return reachable;
     }
 

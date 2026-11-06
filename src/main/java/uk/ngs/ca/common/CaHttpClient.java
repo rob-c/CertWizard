@@ -203,9 +203,10 @@ public class CaHttpClient {
             CaHttpResponse response;
             try {
                 response = sendOnce(request);
-            } catch (InterruptedIOException e) {
-                throw e;
             } catch (IOException e) {
+                if (Thread.currentThread().isInterrupted()) {
+                    throw e; // cancelled by the caller: no retry, no state change
+                }
                 maybeSent |= !NetworkFailures.isProvablyNotSent(e);
                 if (attempt < maxAttempts && policy.mayRetry(request, e)) {
                     Duration delay = policy.backoff(attempt, random.getAsDouble());

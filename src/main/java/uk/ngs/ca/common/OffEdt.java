@@ -19,6 +19,7 @@
 package uk.ngs.ca.common;
 
 import javax.swing.BorderFactory;
+import javax.swing.JButton;
 import javax.swing.JDialog;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
@@ -28,12 +29,14 @@ import javax.swing.WindowConstants;
 import java.awt.BorderLayout;
 import java.awt.Component;
 import java.awt.Dialog;
+import java.awt.FlowLayout;
 import java.awt.GraphicsEnvironment;
 import java.awt.Window;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.FutureTask;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Runs blocking network work off the Swing event dispatch thread while
@@ -42,8 +45,11 @@ import java.util.concurrent.TimeoutException;
  * Called on the EDT, {@link #call} runs the task on a background thread and
  * waits for it inside a modal "please wait" dialog (shown only if the task
  * takes longer than a moment), so the UI keeps painting and other windows
- * cannot be used meanwhile. Called on any other thread, it simply runs the
- * task. Exceptions thrown by the task are rethrown unchanged.
+ * cannot be used meanwhile. The dialog's Cancel button interrupts the work:
+ * requests through {@link CaHttpClient} then stop promptly (and are not
+ * retried), so the user is never stuck behind a slow server. Called on any
+ * other thread, it simply runs the task. Exceptions thrown by the task are
+ * rethrown unchanged.
  */
 public final class OffEdt {
 
@@ -74,8 +80,9 @@ public final class OffEdt {
             return task.run();
         }
         FutureTask<T> future = new FutureTask<>(task::run);
-        boolean headless = GraphicsEnvironment.isHeadless();
-        JDialog dialog = headless ? null : createDialog(parent, message);
+        AtomicReference<Thread> workerRef = new AtomicReference<>();
+        JDialog dialog = GraphicsEnvironment.isHeadless() ? null
+                : createDialog(parent, message, () -> workerRef.get().interrupt());
         Thread worker = new Thread(() -> {
             try {
                 future.run();
@@ -86,6 +93,7 @@ public final class OffEdt {
             }
         }, "certwizard-network-call");
         worker.setDaemon(true);
+        workerRef.set(worker);
         worker.start();
 
         if (dialog != null) {
@@ -129,16 +137,26 @@ public final class OffEdt {
         }
     }
 
-    private static JDialog createDialog(Component parent, String message) {
+    private static JDialog createDialog(Component parent, String message, Runnable cancel) {
         Window owner = parent == null ? null : (parent instanceof Window ? (Window) parent : SwingUtilities.getWindowAncestor(parent));
         JDialog dialog = new JDialog(owner, "Please wait", Dialog.ModalityType.APPLICATION_MODAL);
         dialog.setDefaultCloseOperation(WindowConstants.DO_NOTHING_ON_CLOSE);
         JPanel panel = new JPanel(new BorderLayout(0, 10));
         panel.setBorder(BorderFactory.createEmptyBorder(15, 20, 15, 20));
-        panel.add(new JLabel(message), BorderLayout.NORTH);
+        JLabel label = new JLabel(message);
+        panel.add(label, BorderLayout.NORTH);
         JProgressBar bar = new JProgressBar();
         bar.setIndeterminate(true);
         panel.add(bar, BorderLayout.CENTER);
+        JButton cancelButton = new JButton("Cancel");
+        cancelButton.addActionListener(e -> {
+            cancelButton.setEnabled(false);
+            label.setText("Cancelling...");
+            cancel.run();
+        });
+        JPanel buttons = new JPanel(new FlowLayout(FlowLayout.RIGHT, 0, 0));
+        buttons.add(cancelButton);
+        panel.add(buttons, BorderLayout.SOUTH);
         dialog.setContentPane(panel);
         dialog.pack();
         dialog.setResizable(false);
