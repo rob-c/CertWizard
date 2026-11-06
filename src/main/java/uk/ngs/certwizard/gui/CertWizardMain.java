@@ -192,9 +192,14 @@ public class CertWizardMain extends javax.swing.JFrame {
     }// </editor-fold>//GEN-END:initComponents
 
     /**
-     * @param args the command line arguments
+     * @param args the command line arguments: an optional data directory
+     *             override, or {@code --self-test} to run the headless start-up
+     *             check in {@link SelfTest} and exit without showing any GUI
      */
     public static void main(String[] args) {
+        if (java.util.Arrays.asList(args).contains(SelfTest.FLAG)) {
+            System.exit(SelfTest.run(System.out, System.err));
+        }
         String dataDirectoryLocationOverride = "";
         if (args.length > 0) {
             dataDirectoryLocationOverride = args[0];
