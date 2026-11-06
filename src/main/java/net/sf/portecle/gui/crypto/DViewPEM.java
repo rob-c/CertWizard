@@ -37,6 +37,7 @@ import java.io.FileWriter;
 import java.io.IOException;
 import java.io.StringWriter;
 import java.text.MessageFormat;
+import java.util.function.Function;
 
 import javax.swing.JButton;
 import javax.swing.JFileChooser;
@@ -52,6 +53,7 @@ import org.bouncycastle.openssl.jcajce.JcaPEMWriter;
 import net.sf.portecle.PortecleJDialog;
 import net.sf.portecle.crypto.CryptoException;
 import net.sf.portecle.gui.error.DThrowable;
+import uk.ngs.certwizard.gui.FilePicker;
 
 /**
  * Modal dialog to display an X.509 object's PEM encoding.
@@ -65,8 +67,8 @@ public class DViewPEM
 	/** Stores PEM encoding */
 	private String m_pem;
 
-	/** File chooser for saving the PEM encoded object */
-	private final JFileChooser m_chooser;
+	/** Asks for the file to save the PEM encoded object to, given this dialog; returns null if cancelled */
+	private final Function<Window, File> m_chooser;
 
 	/**
 	 * Creates new DViewPEM dialog.
@@ -78,6 +80,25 @@ public class DViewPEM
 	 * @throws CryptoException A problem was encountered getting the object's PEM encoding
 	 */
 	public DViewPEM(Window parent, String sTitle, Object obj, JFileChooser chooser)
+	    throws CryptoException
+	{
+		this(parent, sTitle, obj, chooser == null ? null : (Function<Window, File>) owner -> {
+			int iRtnValue = chooser.showDialog(owner, RB.getString("DViewPEM.jbSave.text"));
+			return iRtnValue == JFileChooser.APPROVE_OPTION ? chooser.getSelectedFile() : null;
+		});
+	}
+
+	/**
+	 * Creates new DViewPEM dialog.
+	 *
+	 * @param parent Parent window
+	 * @param sTitle The dialog title
+	 * @param obj Object to display encoding for
+	 * @param chooser Asks for the file to save the PEM encoding to, given this dialog as parent; returns null if
+	 *            the user cancels
+	 * @throws CryptoException A problem was encountered getting the object's PEM encoding
+	 */
+	public DViewPEM(Window parent, String sTitle, Object obj, Function<Window, File> chooser)
 	    throws CryptoException
 	{
 		super(parent, sTitle, true);
@@ -163,12 +184,11 @@ public class DViewPEM
 	 */
 	private void savePressed()
 	{
-		int iRtnValue = m_chooser.showDialog(this, RB.getString("DViewPEM.jbSave.text"));
-		if (iRtnValue == JFileChooser.APPROVE_OPTION)
+		File fExportFile = m_chooser.apply(this);
+		if (fExportFile != null)
 		{
-			File fExportFile = m_chooser.getSelectedFile();
-
-			if (fExportFile.isFile())
+			// Skip the question if the native save panel has already asked it
+			if (fExportFile.isFile() && !FilePicker.isOverwriteConfirmed(fExportFile))
 			{
 				String sMessage =
 				    MessageFormat.format(RB.getString("DViewPEM.OverWriteFile.message"), fExportFile.getName());
