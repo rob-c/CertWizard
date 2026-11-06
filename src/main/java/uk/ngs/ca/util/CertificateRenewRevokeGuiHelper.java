@@ -22,26 +22,24 @@ import net.sf.portecle.DGetAlias;
 import net.sf.portecle.FPortecle;
 import net.sf.portecle.gui.SwingHelper;
 import org.apache.commons.validator.routines.EmailValidator;
-import uk.ngs.ca.certificate.OnlineCertRenewRequest;
+import uk.ngs.ca.certificate.chain.BundledCaCertificates;
 import uk.ngs.ca.certificate.client.RevokeRequest;
 import uk.ngs.ca.certificate.management.ClientKeyStoreCaServiceWrapper;
 import uk.ngs.ca.certificate.management.KeyStoreEntryWrapper;
-import uk.ngs.ca.common.CAKeyPair;
-import uk.ngs.ca.common.CertUtil;
-import uk.ngs.ca.common.Pair;
+import uk.ngs.ca.certificate.renew.AutoRenewService;
+import uk.ngs.ca.certificate.renew.RenewalLedger;
+import uk.ngs.ca.certificate.renew.RenewalSubmitter;
+import uk.ngs.ca.common.SystemStatus;
 import uk.ngs.certwizard.gui.GeneralMessageDialog;
 
 import javax.swing.*;
 import java.awt.*;
 import java.io.IOException;
-import java.security.KeyPair;
 import java.security.KeyStoreException;
-import java.security.PrivateKey;
 import java.security.cert.CertificateException;
-import java.security.cert.CertificateExpiredException;
-import java.security.cert.CertificateNotYetValidException;
 import java.security.cert.X509Certificate;
 import java.text.MessageFormat;
+import java.time.Instant;
 import java.util.Calendar;
 import java.util.Date;
 import java.util.ResourceBundle;
@@ -249,95 +247,76 @@ public class CertificateRenewRevokeGuiHelper {
         }
         //if(true) return null; 
 
+        // Re-check now that the (possibly long-open) dialogs are done: the
+        // certificate may have expired meanwhile (TOCTOU), and an EMAILADDRESS
+        // in the DN must match the email being sent.
+        RenewalSubmitter submitter = RenewalSubmitter.online(caKeyStoreModel);
+        String reason = submitter.ineligibilityReason(selectedKSEW, email);
+        if (reason != null) {
+            GeneralMessageDialog.showAndWait(parentComponent, reason, "Cannot renew", JOptionPane.ERROR_MESSAGE);
+            return null;
+        }
+
+        // Ask user for a new alias for the renewal (provide suitable suggestion)
+        JOptionPane.showMessageDialog(parentComponent, "You will now be prompted to enter a new unique alias.\n"
+                + "This is simply a memorable display name/tag for your new certificate.", "Certificate Renewal", JOptionPane.INFORMATION_MESSAGE);
+        String newCsrRenewalAlias = getNewEntryAliasHelper(selectedKSEW.getAlias() + "_renew", "FPortecle.KeyPairEntryAlias.Title", false);
+        if (newCsrRenewalAlias == null) {
+            return null; //user hit cancel
+        }
+
+        X509Certificate toRenewCert = this.caKeyStoreModel.getClientKeyStore().getX509Certificate(selectedKSEW.getAlias());
         try {
             parentComponent.setCursor(Cursor.getPredefinedCursor(Cursor.WAIT_CURSOR));
-
-            // Get the cert to be renewed (and its private key) and validate
-            X509Certificate toRenewCert = this.caKeyStoreModel.getClientKeyStore().getX509Certificate(selectedKSEW.getAlias());
-            PrivateKey toRenewPrivateKey = this.caKeyStoreModel.getClientKeyStore().getPrivateKey(toRenewCert.getPublicKey());
-            try {
-                // MUST check validity now after all blocking user dialogs have been processed
-                // to prevent TOCTOU issues (its possible the user left a modal 
-                // dialog open for extended period of time and now the cert is 
-                // newly expired or fallen out of the tolerance threshold) 
-                toRenewCert.checkValidity();
-            } catch (CertificateExpiredException ex) {
-                Calendar dateThirtyDaysAgo = Calendar.getInstance(TimeZone.getTimeZone("UTC"));
-                dateThirtyDaysAgo.add(Calendar.DAY_OF_MONTH, -30);
-                if (!certExpireDate.after(dateThirtyDaysAgo.getTime())) {
-                    parentComponent.setCursor(Cursor.getPredefinedCursor(Cursor.DEFAULT_CURSOR));
-                    JOptionPane.showMessageDialog(parentComponent, "Renewal Certificate has expired", "Invalid Certificate", JOptionPane.ERROR_MESSAGE);
+            // New key pair, PKCS#10 signed for the same DN, authenticated with
+            // the current key; on success a placeholder entry is saved.
+            RenewalSubmitter.Result result = submitter.submit(selectedKSEW, email, newCsrRenewalAlias);
+            recordInRenewalLedger(toRenewCert, result);
+            parentComponent.setCursor(Cursor.getPredefinedCursor(Cursor.DEFAULT_CURSOR));
+            switch (result.getOutcome()) {
+                case SUBMITTED:
+                    JOptionPane.showMessageDialog(parentComponent, "The renewal request has been submitted", "Renewal request successful", JOptionPane.INFORMATION_MESSAGE);
+                    return result.getNewAlias();
+                case REJECTED_BY_CA:
+                    GeneralMessageDialog.showAndWait(this.parentComponent, "Server responded an error: " + result.getMessage(), "CSR Renew Error", JOptionPane.ERROR_MESSAGE);
                     return null;
-                }
-            } catch (CertificateNotYetValidException ex) {
-                parentComponent.setCursor(Cursor.getPredefinedCursor(Cursor.DEFAULT_CURSOR));
-                JOptionPane.showMessageDialog(parentComponent, "Renewal Certificate is not yet valid", "Invalid Certificate", JOptionPane.ERROR_MESSAGE);
-                return null;
-            }
-
-            // If the cert has EMAILADDRESS encoded in the DN, then it SHOULD match the 
-            // email value known to the server, otherwise there is a problem. 
-            // Use authCert.getSubjectX500Principal().toString() to ensure EMAILADDRESS is listed in DN string 
-            // (this is not portable: authCert.getSubjectDN().getName() - is denigrated)
-            // (this does not provide email attribute in x500: authCert.getSubjectX500Principal().getName()) 
-            String dn = toRenewCert.getSubjectX500Principal().toString();
-            String certEmailValue = CertUtil.extractDnAttribute(dn, CertUtil.DNAttributeType.EMAILADDRESS);
-            if (certEmailValue != null && !certEmailValue.equals("")) {
-                if (!certEmailValue.equals(email)) {
-                    parentComponent.setCursor(Cursor.getPredefinedCursor(Cursor.DEFAULT_CURSOR));
-                    String message = "Unable to renew. The email encoded in the certificate DN is different from the email recorded in the CA database.\n"
-                            + "This is due to a known issue on our CA server.\n"
-                            + "Please report this to the helpdesk (support@grid-support.ac.uk) and copy the following:\n"
-                            + "DN: [" + selectedKSEW.getX500PrincipalName() + "]\n"
-                            + "CertId: [" + selectedKSEW.getServerCertificateCSRInfo().getId() + "]\n"
-                            + "Email known to server: [" + selectedKSEW.getServerCertificateCSRInfo().getUserEmail() + "]\n"
-                            + "Email in certficate DN: [" + certEmailValue + "]\n";
-                    JOptionPane.showMessageDialog(parentComponent, message, "CA Issue", JOptionPane.ERROR_MESSAGE);
+                case UNCERTAIN:
+                    GeneralMessageDialog.showAndWait(this.parentComponent, result.getMessage()
+                            + "\nThe request may or may not have reached the CA. Use Refresh before trying again.", "CSR Renew Error", JOptionPane.ERROR_MESSAGE);
                     return null;
-                }
-            }
-
-            // Ask user for a new alias for the renewal (provide suitable suggestion)
-            JOptionPane.showMessageDialog(parentComponent, "You will now be prompted to enter a new unique alias.\n"
-                    + "This is simply a memorable display name/tag for your new certificate.", "Certificate Renewal", JOptionPane.INFORMATION_MESSAGE);
-            String newCsrRenewalAlias = selectedKSEW.getAlias();
-            newCsrRenewalAlias = getNewEntryAliasHelper(newCsrRenewalAlias + "_renew", "FPortecle.KeyPairEntryAlias.Title", false);
-            if (newCsrRenewalAlias == null) {
-                return null; //user hit cancel
-            }
-
-            // Create a new key pair for the PKCS#10 renewal request and for the 
-            // new self signed cert that is stored in the keyStore. 
-            KeyPair csrKeyPair = CAKeyPair.getNewKeyPair();
-            // Submit the renewal
-            OnlineCertRenewRequest renewal = new OnlineCertRenewRequest(toRenewCert, toRenewPrivateKey, csrKeyPair, email);
-            Pair<Boolean, String> result = renewal.doRenewal();
-
-            // If submitted ok, save a new self-signed cert in the keyStore 
-            // created with the PKCS#10 key pair and ReStore. 
-            if (result.first) {
-                X509Certificate cert = CAKeyPair.createSelfSignedCertificate(csrKeyPair, renewal.getOU(), renewal.getL(), renewal.getCN());
-                X509Certificate[] certs = {cert};
-
-                // reStore the keystore 
-                caKeyStoreModel.getClientKeyStore().setKeyEntry(newCsrRenewalAlias, csrKeyPair.getPrivate(), caKeyStoreModel.getPassword(), certs);
-                caKeyStoreModel.getClientKeyStore().reStore();
-
-                // Add the new entry to the model map
-                KeyStoreEntryWrapper newCsrEntry = caKeyStoreModel.createKSEntryWrapperInstanceFromEntry(newCsrRenewalAlias);
-                caKeyStoreModel.getKeyStoreEntryMap().put(newCsrRenewalAlias, newCsrEntry);
-
-                // Inform user of successful submission 
-                parentComponent.setCursor(Cursor.getPredefinedCursor(Cursor.DEFAULT_CURSOR));
-                JOptionPane.showMessageDialog(parentComponent, "The renewal request has been submitted", "Renewal request successful", JOptionPane.INFORMATION_MESSAGE);
-                return newCsrRenewalAlias;
-            } else {
-                parentComponent.setCursor(Cursor.getPredefinedCursor(Cursor.DEFAULT_CURSOR));
-                GeneralMessageDialog.showAndWait(this.parentComponent, "Server responded an error: " + result.second, "CSR Renew Error", JOptionPane.ERROR_MESSAGE);
-                return null;
+                default:
+                    GeneralMessageDialog.showAndWait(this.parentComponent, result.getMessage(), "Cannot renew", JOptionPane.ERROR_MESSAGE);
+                    return null;
             }
         } finally {
             parentComponent.setCursor(Cursor.getPredefinedCursor(Cursor.DEFAULT_CURSOR));
+        }
+    }
+
+    /**
+     * Record a manual renewal in the auto-renew ledger so that auto-renew
+     * follows it up (installing the issued certificate) and never submits a
+     * second renewal for the same certificate.
+     */
+    private void recordInRenewalLedger(X509Certificate renewed, RenewalSubmitter.Result result) {
+        RenewalLedger.State state;
+        switch (result.getOutcome()) {
+            case SUBMITTED:
+                state = RenewalLedger.State.SUBMITTED;
+                break;
+            case UNCERTAIN:
+                state = RenewalLedger.State.UNCERTAIN;
+                break;
+            default:
+                return;
+        }
+        try {
+            new RenewalLedger(AutoRenewService.ledgerFile(SystemStatus.getInstance().getCwDataDirectory()))
+                    .put(BundledCaCertificates.sha256Fingerprint(renewed), state, Instant.now(),
+                            result.getNewAlias(), result.getMessage(), true);
+        } catch (Exception e) {
+            java.util.logging.Logger.getLogger(CertificateRenewRevokeGuiHelper.class.getName())
+                    .log(java.util.logging.Level.WARNING, "Could not record renewal in the auto-renew ledger", e);
         }
     }
 

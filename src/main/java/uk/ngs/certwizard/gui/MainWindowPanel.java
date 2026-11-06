@@ -32,6 +32,10 @@ import uk.ngs.ca.certificate.client.PingService;
 import uk.ngs.ca.certificate.management.ClientKeyStoreCaServiceWrapper;
 import uk.ngs.ca.certificate.management.KeyStoreEntryWrapper;
 import uk.ngs.ca.certificate.management.KeyStoreEntryWrapper.KEYSTORE_ENTRY_TYPE;
+import uk.ngs.ca.certificate.renew.AutoRenewService;
+import uk.ngs.ca.certificate.renew.AutoRenewSettings;
+import uk.ngs.ca.certificate.renew.RenewalLedger;
+import uk.ngs.ca.certificate.renew.RenewalSubmitter;
 import uk.ngs.ca.certificate.verify.ExportVerifier;
 import uk.ngs.ca.common.CertUtil;
 import uk.ngs.ca.common.GuiExecutor;
@@ -135,6 +139,64 @@ public class MainWindowPanel extends javax.swing.JPanel implements Observer {
 
         this.updateKeyStoreGuiFromModel();
         this.setComboFirstCertEntry();
+        this.startAutoRenew();
+    }
+
+    /**
+     * Create the auto-renew service, reflect its setting in the checkbox and
+     * schedule it (first run after two minutes, then every six hours). It
+     * does nothing unless the user has switched auto-renew on.
+     */
+    private void startAutoRenew() {
+        if (this.caKeyStoreModel == null) {
+            this.chkAutoRenew.setEnabled(false);
+            return;
+        }
+        try {
+            File dataDir = SystemStatus.getInstance().getCwDataDirectory();
+            this.autoRenewSettings = new AutoRenewSettings(AutoRenewService.settingsFile(dataDir));
+            RenewalLedger ledger = new RenewalLedger(AutoRenewService.ledgerFile(dataDir));
+            final MainWindowPanel self = this;
+            this.autoRenewService = new AutoRenewService(this.caKeyStoreModel, this.autoRenewSettings, ledger,
+                    RenewalSubmitter.online(this.caKeyStoreModel), new AutoRenewService.Host() {
+                @Override
+                public boolean isOnline() {
+                    return SystemStatus.getInstance().getIsOnline();
+                }
+
+                @Override
+                public boolean isBusy() {
+                    return SwingWorker.StateValue.STARTED.equals(onlineUpdateTask.getState());
+                }
+
+                @Override
+                public void notifyUser(String title, String message, boolean problem) {
+                    SwingUtilities.invokeLater(() -> {
+                        JOptionPane pane = new JOptionPane(message,
+                                problem ? JOptionPane.WARNING_MESSAGE : JOptionPane.INFORMATION_MESSAGE);
+                        JDialog dialog = pane.createDialog(self, title);
+                        dialog.setModal(false);
+                        dialog.setVisible(true);
+                    });
+                }
+
+                @Override
+                public void modelChanged() {
+                    SwingUtilities.invokeLater(self::updateKeyStoreGuiFromModel);
+                }
+
+                @Override
+                public boolean refreshFromCa(KeyStoreEntryWrapper entry) throws Exception {
+                    return caKeyStoreModel.onlineUpdateKeyStoreEntry(entry);
+                }
+            }, java.time.Clock.systemUTC(), new File(System.getProperty("user.home"), ".globus").toPath());
+            this.chkAutoRenew.setSelected(this.autoRenewSettings.isEnabled());
+            this.autoRenewService.start(java.time.Duration.ofMinutes(2), java.time.Duration.ofHours(6));
+        } catch (Exception ex) {
+            Logger.getLogger(MainWindowPanel.class.getName()).log(Level.WARNING, "Auto-renew unavailable", ex);
+            this.chkAutoRenew.setEnabled(false);
+            this.chkAutoRenew.setToolTipText("Auto-renew is unavailable: " + ex.getMessage());
+        }
     }
 
     /**
@@ -1387,6 +1449,7 @@ public class MainWindowPanel extends javax.swing.JPanel implements Observer {
         jComboBox1 = new javax.swing.JComboBox();
         btnRefreshAll = new javax.swing.JButton();
         btnVerify = new javax.swing.JButton();
+        chkAutoRenew = new javax.swing.JCheckBox();
         btnCancelOnlineUpdate = new javax.swing.JButton();
         labelOnlineUpdate = new javax.swing.JLabel();
         jProgressBar1 = new javax.swing.JProgressBar();
@@ -1787,6 +1850,11 @@ public class MainWindowPanel extends javax.swing.JPanel implements Observer {
                 + "key strength, signature algorithms, usage and revocation.");
         btnVerify.addActionListener(this::btnVerifyActionPerformed);
 
+        chkAutoRenew.setText("Auto-renew");
+        chkAutoRenew.setToolTipText("While CertWizard is running, request renewal of certificates shortly before they "
+                + "expire and install the renewed certificate when the CA issues it.");
+        chkAutoRenew.addActionListener(this::chkAutoRenewActionPerformed);
+
         org.jdesktop.layout.GroupLayout jPanel2Layout = new org.jdesktop.layout.GroupLayout(jPanel2);
         jPanel2.setLayout(jPanel2Layout);
         jPanel2Layout.setHorizontalGroup(
@@ -1799,7 +1867,9 @@ public class MainWindowPanel extends javax.swing.JPanel implements Observer {
                                 .addPreferredGap(org.jdesktop.layout.LayoutStyle.RELATED)
                                 .add(btnRefreshAll, org.jdesktop.layout.GroupLayout.PREFERRED_SIZE, 37, org.jdesktop.layout.GroupLayout.PREFERRED_SIZE)
                                 .addPreferredGap(org.jdesktop.layout.LayoutStyle.RELATED)
-                                .add(btnVerify))
+                                .add(btnVerify)
+                                .addPreferredGap(org.jdesktop.layout.LayoutStyle.RELATED)
+                                .add(chkAutoRenew))
         );
         jPanel2Layout.setVerticalGroup(
                 jPanel2Layout.createParallelGroup(org.jdesktop.layout.GroupLayout.LEADING)
@@ -1808,6 +1878,7 @@ public class MainWindowPanel extends javax.swing.JPanel implements Observer {
                                 .add(jPanel2Layout.createParallelGroup(org.jdesktop.layout.GroupLayout.LEADING)
                                         .add(btnRefreshAll)
                                         .add(btnVerify)
+                                        .add(chkAutoRenew)
                                         .add(jPanel2Layout.createParallelGroup(org.jdesktop.layout.GroupLayout.BASELINE)
                                                 .add(jComboBox1, org.jdesktop.layout.GroupLayout.PREFERRED_SIZE, 28, org.jdesktop.layout.GroupLayout.PREFERRED_SIZE)
                                                 .add(btnChangePasswd)))
@@ -2063,6 +2134,40 @@ public class MainWindowPanel extends javax.swing.JPanel implements Observer {
         VerifyCertificateAction.run(this, this.caKeyStoreModel.getClientKeyStore(), selectedKSEW.getAlias(), this.PASSPHRASE);
     }
 
+    private void chkAutoRenewActionPerformed(java.awt.event.ActionEvent evt) {
+        if (this.autoRenewSettings == null || this.autoRenewService == null) {
+            this.chkAutoRenew.setSelected(false);
+            return;
+        }
+        boolean on = this.chkAutoRenew.isSelected();
+        if (on) {
+            int ret = JOptionPane.showConfirmDialog(this,
+                    "With auto-renew on, while CertWizard is running it will:\n"
+                    + " - request renewal of each of your certificates " + this.autoRenewSettings.getWindow().toDays()
+                    + " days before it expires (once per certificate; never twice),\n"
+                    + " - install the renewed certificate, with its full chain, when the CA issues it, and\n"
+                    + " - update ~/.globus/usercert.pem and userkey.pem if they hold the old certificate\n"
+                    + "   (the previous files are kept as backups).\n\n"
+                    + "Renewals use the email address the CA has on record for each certificate.\n\n"
+                    + "Turn auto-renew on?", "Auto-renew", JOptionPane.YES_NO_OPTION, JOptionPane.QUESTION_MESSAGE);
+            if (ret != JOptionPane.YES_OPTION) {
+                this.chkAutoRenew.setSelected(false);
+                return;
+            }
+        }
+        try {
+            this.autoRenewSettings.setEnabled(on);
+        } catch (IOException ex) {
+            JOptionPane.showMessageDialog(this, "Could not save the auto-renew setting: " + ex.getMessage(),
+                    "Auto-renew", JOptionPane.ERROR_MESSAGE);
+            this.chkAutoRenew.setSelected(!on);
+            return;
+        }
+        if (on) {
+            this.autoRenewService.runSoon();
+        }
+    }
+
     private void btnCancelOnlineUpdateActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_btnCancelOnlineUpdateActionPerformed
         doCancelOnlineUpdateAction();
     }//GEN-LAST:event_btnCancelOnlineUpdateActionPerformed
@@ -2092,6 +2197,9 @@ public class MainWindowPanel extends javax.swing.JPanel implements Observer {
     private javax.swing.JButton btnRenew;
     private javax.swing.JButton btnRevoke;
     private javax.swing.JButton btnVerify;
+    private javax.swing.JCheckBox chkAutoRenew;
+    private AutoRenewService autoRenewService;
+    private AutoRenewSettings autoRenewSettings;
     private javax.swing.JTextField caCertStatusTextField;
     private javax.swing.JTextField certEmailTextField;
     private javax.swing.JLabel certificateTypeLabel;
