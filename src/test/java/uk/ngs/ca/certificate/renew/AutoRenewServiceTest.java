@@ -7,7 +7,6 @@ import org.junit.rules.TemporaryFolder;
 import uk.ngs.ca.certificate.chain.BundledCaCertificates;
 import uk.ngs.ca.certificate.chain.TestPki;
 import uk.ngs.ca.certificate.management.KeyStoreEntryWrapper;
-import uk.ngs.ca.common.Pair;
 import uk.ngs.ca.util.GlobusCredentialWriter;
 
 import java.io.InputStream;
@@ -186,7 +185,7 @@ public class AutoRenewServiceTest {
     @Test
     public void caRefusalIsRetriedAfterADayThenGivenUp() throws Exception {
         AutoRenewService s = service(Duration.ofDays(20), true);
-        fixture.caAnswer = Pair.create(false, "try later");
+        fixture.caAnswer = new RenewalSubmitter.Answer(RenewalSubmitter.Answer.Kind.REFUSED, "try later");
         s.runOnce();
         assertEquals(1, fixture.requestsSent.get());
         assertEquals(RenewalLedger.State.FAILED, ledger.get(fp()).state);
@@ -205,6 +204,31 @@ public class AutoRenewServiceTest {
         fixture.caAnswer = null;
         s.runOnce();
         clock.now = clock.now.plus(Duration.ofDays(2));
+        s.runOnce();
+        assertEquals(1, fixture.requestsSent.get());
+        assertEquals(RenewalLedger.State.UNCERTAIN, ledger.get(fp()).state);
+    }
+
+    @Test
+    public void unreachableCaConsumesNoAttemptAndIsRetriedNextRun() throws Exception {
+        AutoRenewService s = service(Duration.ofDays(10), true);
+        fixture.caAnswer = new RenewalSubmitter.Answer(RenewalSubmitter.Answer.Kind.NOT_SENT, "Could not connect");
+        List<String> log = s.runOnce();
+        assertTrue(log.toString(), log.toString().contains("nothing sent; will retry"));
+        assertNull("no ledger record for an attempt that sent nothing", ledger.get(fp()));
+        fixture.caAnswer = new RenewalSubmitter.Answer(RenewalSubmitter.Answer.Kind.ACCEPTED, "ok");
+        s.runOnce();
+        assertEquals(2, fixture.requestsSent.get());
+        assertEquals(RenewalLedger.State.SUBMITTED, ledger.get(fp()).state);
+        assertEquals(1, ledger.get(fp()).attempts);
+    }
+
+    @Test
+    public void signedRequestThatMayHaveArrivedIsNeverResent() throws Exception {
+        AutoRenewService s = service(Duration.ofDays(10), true);
+        fixture.caAnswer = new RenewalSubmitter.Answer(RenewalSubmitter.Answer.Kind.MAYBE_SENT, "read timed out");
+        s.runOnce();
+        clock.now = clock.now.plus(Duration.ofDays(3));
         s.runOnce();
         assertEquals(1, fixture.requestsSent.get());
         assertEquals(RenewalLedger.State.UNCERTAIN, ledger.get(fp()).state);

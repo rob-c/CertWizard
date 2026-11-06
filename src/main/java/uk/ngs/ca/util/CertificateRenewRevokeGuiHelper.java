@@ -289,6 +289,10 @@ public class CertificateRenewRevokeGuiHelper {
                 case REJECTED_BY_CA:
                     GeneralMessageDialog.showAndWait(this.parentComponent, "Server responded an error: " + result.getMessage(), "CSR Renew Error", JOptionPane.ERROR_MESSAGE);
                     return null;
+                case NOT_SENT:
+                    GeneralMessageDialog.showAndWait(this.parentComponent, result.getMessage()
+                            + "\nNothing was submitted; please try again when the CA can be reached.", "CSR Renew Error", JOptionPane.ERROR_MESSAGE);
+                    return null;
                 case UNCERTAIN:
                     GeneralMessageDialog.showAndWait(this.parentComponent, result.getMessage()
                             + "\nThe request may or may not have reached the CA. Use Refresh before trying again.", "CSR Renew Error", JOptionPane.ERROR_MESSAGE);

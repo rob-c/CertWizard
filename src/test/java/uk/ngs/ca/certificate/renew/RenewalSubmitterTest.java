@@ -5,7 +5,6 @@ import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
 import uk.ngs.ca.certificate.chain.CertChainBuilder;
 import uk.ngs.ca.certificate.management.TestCsrInfo;
-import uk.ngs.ca.common.Pair;
 
 import java.security.cert.X509Certificate;
 import java.time.Clock;
@@ -40,7 +39,7 @@ public class RenewalSubmitterTest {
     @Test
     public void caRefusalStoresNothing() throws Exception {
         RenewFixture f = fixture(Duration.ofDays(10));
-        f.caAnswer = Pair.create(false, "Renewal not allowed");
+        f.caAnswer = new RenewalSubmitter.Answer(RenewalSubmitter.Answer.Kind.REFUSED, "Renewal not allowed");
         RenewalSubmitter.Result r = f.submitter(Clock.systemUTC()).submit(f.entry(RenewFixture.ALIAS), RenewFixture.EMAIL, "renewed");
         assertEquals(RenewalSubmitter.Outcome.REJECTED_BY_CA, r.getOutcome());
         assertEquals("Renewal not allowed", r.getMessage());

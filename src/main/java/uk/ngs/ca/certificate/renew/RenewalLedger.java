@@ -149,6 +149,20 @@ public final class RenewalLedger {
     }
 
     /**
+     * Forget a certificate's record (used when an attempt provably sent
+     * nothing, so it should not count).
+     *
+     * @param fingerprint certificate fingerprint
+     * @throws IOException if the ledger cannot be saved
+     */
+    public synchronized void remove(String fingerprint) throws IOException {
+        for (String suffix : new String[]{".state", ".time", ".attempts", ".alias", ".message"}) {
+            props.remove(fingerprint + suffix);
+        }
+        save();
+    }
+
+    /**
      * @return fingerprints with a record in the given state
      */
     public synchronized java.util.List<String> inState(State state) {

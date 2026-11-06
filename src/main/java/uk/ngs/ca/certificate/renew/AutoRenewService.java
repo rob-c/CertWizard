@@ -313,12 +313,13 @@ public final class AutoRenewService {
         }
         String newAlias = uniqueAlias(alias + " (renewed " + DateTimeFormatter.ISO_LOCAL_DATE.withZone(ZoneOffset.UTC)
                 .format(clock.instant()) + ")");
-        // Durable marker BEFORE anything is sent.
-        record(fp, RenewalLedger.State.ATTEMPTING, newAlias, null, true);
+        // Durable marker BEFORE anything is sent. The attempt is counted
+        // once we know whether anything reached the CA.
+        record(fp, RenewalLedger.State.ATTEMPTING, newAlias, null, false);
         RenewalSubmitter.Result result = submitter.submit(entry, email, newAlias);
         switch (result.getOutcome()) {
             case SUBMITTED:
-                record(fp, RenewalLedger.State.SUBMITTED, newAlias, result.getMessage(), false);
+                record(fp, RenewalLedger.State.SUBMITTED, newAlias, result.getMessage(), true);
                 log.add("[" + alias + "] renewal submitted as [" + newAlias + "]");
                 host.modelChanged();
                 host.notifyUser("Certificate renewal requested",
@@ -326,19 +327,24 @@ public final class AutoRenewService {
                                 + "The new certificate will appear as [" + newAlias + "] and be installed automatically "
                                 + "once the CA has approved it.", false);
                 break;
+            case NOT_SENT:
+                // Nothing reached the CA: forget the attempt; the next run retries.
+                ledger.remove(fp);
+                log.add("[" + alias + "] CA unreachable, nothing sent; will retry on the next run: " + result.getMessage());
+                break;
             case REJECTED_BY_CA:
-                record(fp, RenewalLedger.State.FAILED, newAlias, result.getMessage(), false);
+                record(fp, RenewalLedger.State.FAILED, newAlias, result.getMessage(), true);
                 log.add("[" + alias + "] CA refused the renewal: " + result.getMessage());
                 host.notifyUser("Automatic renewal refused", "The CA refused the renewal of [" + alias + "]: "
                         + result.getMessage() + "\nCertWizard will try again in "
                         + AutoRenewPolicy.RETRY_AFTER.toHours() + " hours (at most " + AutoRenewPolicy.MAX_ATTEMPTS + " times).", true);
                 break;
             case NOT_ELIGIBLE:
-                record(fp, RenewalLedger.State.FAILED, newAlias, result.getMessage(), false);
+                record(fp, RenewalLedger.State.FAILED, newAlias, result.getMessage(), true);
                 log.add("[" + alias + "] not submitted: " + result.getMessage());
                 break;
             default:
-                record(fp, RenewalLedger.State.UNCERTAIN, newAlias, result.getMessage(), false);
+                record(fp, RenewalLedger.State.UNCERTAIN, newAlias, result.getMessage(), true);
                 warnedThisSession.add(fp);
                 log.add("[" + alias + "] renewal outcome uncertain: " + result.getMessage());
                 host.notifyUser("Automatic renewal needs attention", "While renewing [" + alias + "]: " + result.getMessage()

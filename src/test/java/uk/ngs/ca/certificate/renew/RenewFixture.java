@@ -4,7 +4,6 @@ import uk.ngs.ca.certificate.chain.TestPki;
 import uk.ngs.ca.certificate.management.ClientKeyStoreCaServiceWrapper;
 import uk.ngs.ca.certificate.management.KeyStoreEntryWrapper;
 import uk.ngs.ca.certificate.management.TestCsrInfo;
-import uk.ngs.ca.common.Pair;
 import uk.ngs.ca.common.SystemStatus;
 import uk.ngs.ca.tools.property.SysProperty;
 
@@ -39,9 +38,9 @@ final class RenewFixture {
     final AtomicInteger requestsSent = new AtomicInteger();
     final List<String> emailsSent = new ArrayList<>();
     /**
-     * What the fake CA answers; null = throw (connection dropped mid-request).
+     * What the fake CA answers; null = throw (unexpected failure mid-request).
      */
-    Pair<Boolean, String> caAnswer = Pair.create(true, "Renewal request received");
+    RenewalSubmitter.Answer caAnswer = new RenewalSubmitter.Answer(RenewalSubmitter.Answer.Kind.ACCEPTED, "Renewal request received");
 
     RenewFixture(File dataDir, Duration validFor) throws Exception {
         this.dataDir = dataDir;
@@ -71,7 +70,7 @@ final class RenewFixture {
     RenewalSubmitter submitter(java.time.Clock clock) {
         return new RenewalSubmitter(model, (cert, key, kp, email) -> new RenewalSubmitter.RenewalRequest() {
             @Override
-            public Pair<Boolean, String> doRenewal() {
+            public RenewalSubmitter.Answer send() {
                 requestsSent.incrementAndGet();
                 emailsSent.add(email);
                 if (caAnswer == null) {

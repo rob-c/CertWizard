@@ -50,4 +50,13 @@ public class RenewalLedgerTest {
         assertEquals(1, l.inState(RenewalLedger.State.UNCERTAIN).size()); // ATTEMPTING reads as UNCERTAIN
         assertTrue(l.inState(RenewalLedger.State.SUBMITTED).isEmpty());
     }
+
+    @Test
+    public void removeForgetsARecord() throws Exception {
+        Path f = tmp.getRoot().toPath().resolve("ledger.properties");
+        RenewalLedger l = new RenewalLedger(f);
+        l.put("abc", RenewalLedger.State.ATTEMPTING, Instant.now(), "x", null, false);
+        l.remove("abc");
+        assertNull(new RenewalLedger(f).get("abc"));
+    }
 }

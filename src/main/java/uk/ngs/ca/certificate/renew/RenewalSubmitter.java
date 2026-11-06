@@ -24,7 +24,6 @@ import uk.ngs.ca.certificate.management.ClientKeyStoreCaServiceWrapper;
 import uk.ngs.ca.certificate.management.KeyStoreEntryWrapper;
 import uk.ngs.ca.common.CAKeyPair;
 import uk.ngs.ca.common.CertUtil;
-import uk.ngs.ca.common.Pair;
 
 import java.security.KeyPair;
 import java.security.PrivateKey;
@@ -70,6 +69,11 @@ public final class RenewalSubmitter {
          */
         NOT_ELIGIBLE,
         /**
+         * The CA could not be reached; nothing that could create a renewal
+         * was received by it. Safe to try again later.
+         */
+        NOT_SENT,
+        /**
          * Something failed while talking to the CA. The request may or may not
          * have reached it, so it must not be resent automatically.
          */
@@ -107,13 +111,35 @@ public final class RenewalSubmitter {
     }
 
     /**
+     * The CA's answer to a renewal request.
+     */
+    public static final class Answer {
+        /**
+         * What the CA may have received.
+         */
+        public enum Kind {
+            ACCEPTED, REFUSED, NOT_SENT, MAYBE_SENT
+        }
+
+        public final Kind kind;
+        public final String message;
+
+        public Answer(Kind kind, String message) {
+            this.kind = kind;
+            this.message = message;
+        }
+    }
+
+    /**
      * One renewal request to the CA (abstracted so tests need no server).
      */
     public interface RenewalRequest {
         /**
-         * @return first: whether the CA accepted it; second: the CA's message.
+         * Send the request.
+         *
+         * @return the answer; implementations should not throw
          */
-        Pair<Boolean, String> doRenewal();
+        Answer send();
 
         String getOU();
 
@@ -136,8 +162,9 @@ public final class RenewalSubmitter {
         OnlineCertRenewRequest r = new OnlineCertRenewRequest(cert, key, kp, email);
         return new RenewalRequest() {
             @Override
-            public Pair<Boolean, String> doRenewal() {
-                return r.doRenewal();
+            public Answer send() {
+                OnlineCertRenewRequest.Result result = r.renew();
+                return new Answer(Answer.Kind.valueOf(result.status.name()), result.message);
             }
 
             @Override
@@ -265,17 +292,24 @@ public final class RenewalSubmitter {
             return new Result(Outcome.NOT_ELIGIBLE, null, "The renewal request could not be built: " + e.getMessage());
         }
 
-        Pair<Boolean, String> answer;
+        Answer answer;
         try {
-            answer = request.doRenewal();
+            answer = request.send();
         } catch (RuntimeException e) {
             return new Result(Outcome.UNCERTAIN, null, "Communication with the CA failed part-way: " + e.getMessage());
         }
         if (answer == null) {
             return new Result(Outcome.UNCERTAIN, null, "The CA gave no answer.");
         }
-        if (!Boolean.TRUE.equals(answer.first)) {
-            return new Result(Outcome.REJECTED_BY_CA, null, answer.second);
+        switch (answer.kind) {
+            case ACCEPTED:
+                break;
+            case REFUSED:
+                return new Result(Outcome.REJECTED_BY_CA, null, answer.message);
+            case NOT_SENT:
+                return new Result(Outcome.NOT_SENT, null, answer.message);
+            default:
+                return new Result(Outcome.UNCERTAIN, null, answer.message);
         }
 
         // Accepted: keep the new key with a self-signed placeholder until the
@@ -292,6 +326,6 @@ public final class RenewalSubmitter {
             return new Result(Outcome.UNCERTAIN, null, "The CA accepted the renewal but saving the new key failed: "
                     + e.getMessage() + ". Do not delete anything; contact support@grid-support.ac.uk.");
         }
-        return new Result(Outcome.SUBMITTED, newAlias, answer.second);
+        return new Result(Outcome.SUBMITTED, newAlias, answer.message);
     }
 }

@@ -118,17 +118,83 @@ public class OnlineCertRenewRequest {
      * server (if any).
      */
     public Pair<Boolean, String> doRenewal() {
+        Result r = renew();
+        return Pair.create(r.status == Status.ACCEPTED, r.message);
+    }
+
+    /**
+     * What the CA may have received, which decides whether a failed renewal
+     * may safely be retried.
+     */
+    public enum Status {
+        /**
+         * The CA accepted the renewal request (201).
+         */
+        ACCEPTED,
+        /**
+         * The CA answered and refused it.
+         */
+        REFUSED,
+        /**
+         * Nothing that could create a renewal reached the CA; safe to retry.
+         */
+        NOT_SENT,
+        /**
+         * The signed request may or may not have reached the CA; must not be
+         * resent automatically.
+         */
+        MAYBE_SENT
+    }
+
+    /**
+     * Renewal outcome with the CA's (or the transport's) message.
+     */
+    public static final class Result {
+        public final Status status;
+        public final String message;
+
+        Result(Status status, String message) {
+            this.status = status;
+            this.message = message;
+        }
+    }
+
+    /**
+     * Submit the renewal (PPPK challenge, then the signed request) and say
+     * precisely what happened. The first request is unauthenticated and only
+     * fetches the challenge, so a failure there cannot have created a
+     * renewal. A failure sending the signed request is NOT_SENT only if it
+     * provably never left this machine.
+     *
+     * @return result; never throws
+     */
+    public Result renew() {
         CaHttpResponse response;
         try {
             response = this.doInitialRequest();
         } catch (IOException ex) {
-            return Pair.create(false, CaHttpException.challengeFailureMessage("renewal request", ex));
+            return new Result(Status.NOT_SENT, CaHttpException.challengeFailureMessage("renewal request", ex));
         }
         try {
-            return this.respondToPPPKChallenge(response);
+            Pair<Boolean, String> p = this.respondToPPPKChallenge(response);
+            return new Result(Boolean.TRUE.equals(p.first) ? Status.ACCEPTED : Status.REFUSED, p.second);
         } catch (IOException ex) {
-            return Pair.create(false, CaHttpException.submissionFailureMessage("renewal request", ex));
+            return new Result(classifySubmissionFailure(ex), CaHttpException.submissionFailureMessage("renewal request", ex));
+        } catch (IllegalStateException ex) {
+            // Malformed challenge: detected before the signed request is sent.
+            return new Result(Status.REFUSED, "Unexpected challenge from the CA: " + ex.getMessage());
         }
+    }
+
+    /**
+     * @param e failure while sending the signed renewal request
+     * @return NOT_SENT if the request provably never left this machine
+     * (CertWizard knew the CA was unreachable, or the connection could not be
+     * made), otherwise MAYBE_SENT.
+     */
+    static Status classifySubmissionFailure(IOException e) {
+        return e instanceof CaOfflineException || NetworkFailures.isProvablyNotSent(e)
+                ? Status.NOT_SENT : Status.MAYBE_SENT;
     }
 
     /**
