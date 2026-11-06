@@ -191,6 +191,7 @@ public class CaHttpClient {
      * @throws InterruptedIOException if the calling thread was interrupted
      */
     public CaHttpResponse send(CaHttpRequest request) throws IOException {
+        NetworkGuard.checkAllowed(request.getUri());
         boolean tracked = tracker != null && !request.isConnectivityProbe();
         if (tracked && tracker.isKnownOffline()) {
             logger.info("{} not sent: the CA server is currently unreachable", request);

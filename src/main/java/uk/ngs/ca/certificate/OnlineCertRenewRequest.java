@@ -47,8 +47,26 @@ import static uk.ngs.ca.common.CertUtil.getPrivateExponent;
  */
 public class OnlineCertRenewRequest {
 
+    /**
+     * @deprecated Snapshot taken when this class was first loaded; requests
+     * read the configured URL each time (see {@link #csrUrl()}), so changing
+     * configuration - or test set-up order - can never send a renewal to a
+     * stale address.
+     */
+    @Deprecated
     public static final String CSRURL = SysProperty.getValue("uk.ngs.ca.request.csr.url");
+    /**
+     * @deprecated Unused; kept for source compatibility.
+     */
+    @Deprecated
     public static final String USERAGENT = SysProperty.getValue("uk.ngs.ca.request.useragent");
+
+    /**
+     * @return the CSR endpoint as configured now.
+     */
+    private static String csrUrl() {
+        return SysProperty.getValue("uk.ngs.ca.request.csr.url");
+    }
     //private static final String SIG_ALG = SysProperty.getValue("ngsca.cert.signature.algorithm");
 
     private final String email;
@@ -206,7 +224,7 @@ public class OnlineCertRenewRequest {
         // First attempt to connect. Add the 'PPPK' header and provide the encoded 
         // public keyid in the request message payload/body. 
         // We subsequently expect a 401 response challenge. 
-        CaHttpRequest request = CaHttpRequest.post(CSRURL)
+        CaHttpRequest request = CaHttpRequest.post(csrUrl())
                 .xmlBody(getDomRepresentation())
                 .header("PPPK", "this is pppk")
                 .build();
@@ -252,7 +270,7 @@ public class OnlineCertRenewRequest {
 
             // The body is rebuilt for the second request; note it carries a
             // new random PIN hash, exactly as the original client did.
-            CaHttpRequest request = CaHttpRequest.post(CSRURL)
+            CaHttpRequest request = CaHttpRequest.post(csrUrl())
                     .xmlBody(getDomRepresentation())
                     .header("PPPK", "this is pppk")
                     .header("keyid", _keyid)
@@ -263,7 +281,7 @@ public class OnlineCertRenewRequest {
 
         } else {
             //we will do cookie thing from here
-            CaHttpRequest request = CaHttpRequest.post(CSRURL)
+            CaHttpRequest request = CaHttpRequest.post(csrUrl())
                     .xmlBody(getDomRepresentation())
                     .header("PPPK", "this is pppk")
                     .header("opaque", _opaqueP)

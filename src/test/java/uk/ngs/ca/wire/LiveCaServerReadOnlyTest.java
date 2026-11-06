@@ -44,7 +44,7 @@ import static org.junit.Assert.assertTrue;
  * operations (ping, message of the day, latest version, CA info / RA list).
  * It never sends POST/PUT/DELETE. Run it on its own, so that no other test
  * has redirected the endpoints or initialised TLS first:
- * <pre>mvn test -Dtest=LiveCaServerReadOnlyTest -Dlive.ca=true</pre>
+ * <pre>mvn test -Dtest=LiveCaServerReadOnlyTest -Dlive.ca=true -Dcertwizard.network.loopbackOnly=false</pre>
  * TLS trust is set up exactly as CertWizardMain does it: a JKS containing
  * the e-Science Root and CA 2B certificates via the javax.net.ssl.trustStore
  * system properties.
@@ -53,7 +53,8 @@ public class LiveCaServerReadOnlyTest {
 
     @BeforeClass
     public static void trustTheEScienceRoots() throws Exception {
-        Assume.assumeTrue("live CA test disabled (enable with -Dlive.ca=true)", Boolean.getBoolean("live.ca"));
+        Assume.assumeTrue("live CA test disabled (enable with -Dlive.ca=true -Dcertwizard.network.loopbackOnly=false)",
+                Boolean.getBoolean("live.ca"));
         KeyStore ks = KeyStore.getInstance("JKS");
         ks.load(null, null);
         CertificateFactory cf = CertificateFactory.getInstance("X.509");

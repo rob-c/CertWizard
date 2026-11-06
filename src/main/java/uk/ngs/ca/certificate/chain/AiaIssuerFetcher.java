@@ -131,6 +131,7 @@ public final class AiaIssuerFetcher implements CertChainBuilder.IssuerFetcher {
     }
 
     private List<X509Certificate> download(URI uri) {
+        uk.ngs.ca.common.NetworkGuard.checkAllowed(uri);
         try {
             HttpRequest request = HttpRequest.newBuilder(uri).timeout(requestTimeout).GET().build();
             HttpResponse<InputStream> response = client.send(request, HttpResponse.BodyHandlers.ofInputStream());

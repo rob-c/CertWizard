@@ -154,6 +154,7 @@ public final class CrlRevocationChecker {
         HttpClient client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5))
                 .followRedirects(HttpClient.Redirect.NORMAL).build();
         CrlSource src = uri -> {
+            uk.ngs.ca.common.NetworkGuard.checkAllowed(uri);
             try {
                 HttpResponse<InputStream> r = client.send(HttpRequest.newBuilder(uri).timeout(Duration.ofSeconds(15)).GET().build(),
                         HttpResponse.BodyHandlers.ofInputStream());
