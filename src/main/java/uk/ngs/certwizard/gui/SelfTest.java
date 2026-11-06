@@ -19,6 +19,7 @@
 package uk.ngs.certwizard.gui;
 
 import org.bouncycastle.jce.provider.BouncyCastleProvider;
+import uk.ngs.ca.certificate.chain.BundledCaCertificates;
 import uk.ngs.ca.common.SystemStatus;
 import uk.ngs.ca.tools.property.SysProperty;
 
@@ -31,7 +32,6 @@ import java.nio.file.Path;
 import java.security.KeyStore;
 import java.security.Provider;
 import java.security.Security;
-import java.security.cert.CertificateFactory;
 import java.security.cert.X509Certificate;
 import java.util.Comparator;
 import java.util.stream.Stream;
@@ -52,7 +52,6 @@ final class SelfTest {
 
     static final String FLAG = "--self-test";
 
-    private static final String[] CA_PEMS = {"/escience-root.pem", "/escience-2b.pem"};
 
     private SelfTest() {
     }
@@ -75,16 +74,9 @@ final class SelfTest {
 
             String version = SysProperty.getValue("ngsca.certwizard.version");
 
-            CertificateFactory x509 = CertificateFactory.getInstance("X.509");
-            X509Certificate[] caCerts = new X509Certificate[CA_PEMS.length];
-            for (int i = 0; i < CA_PEMS.length; i++) {
-                try (InputStream in = SelfTest.class.getResourceAsStream(CA_PEMS[i])) {
-                    if (in == null) {
-                        throw new IllegalStateException("bundled CA certificate " + CA_PEMS[i] + " is missing");
-                    }
-                    caCerts[i] = (X509Certificate) x509.generateCertificate(in);
-                }
-            }
+            // Every bundled CA certificate, each checked against its pinned
+            // SHA-256 fingerprint (throws if any is missing or altered).
+            java.util.List<X509Certificate> caCerts = BundledCaCertificates.all();
 
             scratch = Files.createTempDirectory("certwizard-self-test");
             status.setCwDataDirectory(scratch.toFile());

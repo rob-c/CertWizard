@@ -47,7 +47,7 @@ public class SelfTestTest {
         String stdout = out.toString(StandardCharsets.UTF_8);
         assertEquals("self-test failed: " + err.toString(StandardCharsets.UTF_8), 0, status);
         assertTrue(stdout, stdout.startsWith("CertWizard self-test OK: "));
-        assertTrue(stdout, stdout.contains("truststore holds 2 CA certs"));
+        assertTrue(stdout, stdout.contains("truststore holds 4 CA certs"));
         assertEquals(userDataDirectory, SystemStatus.getInstance().getCwDataDirectory());
     }
 }
