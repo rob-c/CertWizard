@@ -20,6 +20,7 @@ package uk.ngs.ca.tools.property;
 
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
+import uk.ngs.ca.certificate.chain.BundledCaCertificates;
 import uk.ngs.ca.common.SystemStatus;
 
 import java.io.File;
@@ -27,8 +28,7 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.security.KeyStore;
-import java.security.cert.Certificate;
-import java.security.cert.CertificateFactory;
+import java.security.cert.X509Certificate;
 import java.util.Properties;
 
 /**
@@ -88,16 +88,13 @@ public class SysProperty {
         // ==================================================================
         KeyStore keyStore = null;
         try {
-            InputStream escience2b = SysProperty.class.getResourceAsStream("/escience-2b.pem");
-            InputStream escienceroot = SysProperty.class.getResourceAsStream("/escience-root.pem");
-            CertificateFactory certificateFactory = CertificateFactory.getInstance("X.509");
-            Certificate escienceRootCert = certificateFactory.generateCertificate(escienceroot);
-            Certificate escience2bCert = certificateFactory.generateCertificate(escience2b);
-
+            // All bundled UK e-Science CA certificates (Root 2007 + CA 2B,
+            // Root 2026 + CA 3B), each checked against its pinned fingerprint.
             keyStore = KeyStore.getInstance("JKS", "SUN");
             keyStore.load(null, null);
-            keyStore.setCertificateEntry("eScienceRoot", escienceRootCert);
-            keyStore.setCertificateEntry("eScienceRoot2B", escience2bCert);
+            for (X509Certificate caCert : BundledCaCertificates.all()) {
+                keyStore.setCertificateEntry(trustStoreAlias(caCert), caCert);
+            }
         } catch (Exception ep) {
             throw new IllegalStateException("Error creating a trustStore.", ep);
         }
@@ -133,6 +130,21 @@ public class SysProperty {
             } catch (IOException ignored) {
             }
         }
+    }
+
+    /**
+     * Alias for a CA certificate in the truststore. The two original entries
+     * keep their historical aliases.
+     */
+    private static String trustStoreAlias(X509Certificate caCert) {
+        String cn = caCert.getSubjectX500Principal().getName();
+        if (cn.contains("CN=UK e-Science Root,")) {
+            return "eScienceRoot";
+        }
+        if (cn.contains("CN=UK e-Science CA 2B,")) {
+            return "eScienceRoot2B";
+        }
+        return "bundled-" + BundledCaCertificates.sha256Fingerprint(caCert).substring(0, 16);
     }
 
     private static void init() {
