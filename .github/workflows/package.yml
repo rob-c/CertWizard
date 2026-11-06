@@ -11,10 +11,10 @@ on:
         required: true
         default: true
       version_tag:
-        description: 'Release Tag to attach binaries to (Only used if Test Mode is false)'
+        description: 'Release Tag to attach binaries to (Only used if Test Mode is false). Leave empty for v<version in pom.xml>'
         type: string
         required: false
-        default: 'v2.2.0'
+        default: ''
 
 jobs:
   build-and-package:
@@ -67,14 +67,83 @@ jobs:
           distribution: 'zulu'
           cache: 'maven'
 
-      # 3. Build and Package
-      - name: Build and Native Package with Maven
-        run: mvn clean package -P ${{ matrix.platform-profile }}
+      # 3. Work out which version/tag is being packaged instead of hard-coding it
+      - name: Resolve version
+        id: version
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          INPUT_TAG: ${{ inputs.version_tag }}
+        run: |
+          version=$(mvn -B -q help:evaluate -Dexpression=project.version -DforceStdout)
+          tag=${RELEASE_TAG:-${INPUT_TAG:-v$version}}
+          if [ "$tag" != "v$version" ]; then
+            echo "::warning::Packaging tag $tag but pom.xml says version $version"
+          fi
+          echo "Packaging CertWizard $version as $tag"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
 
-      # 4. Upload artifacts
+      # 4. Build and Package. On macOS this also signs CertWizard.app, checks the
+      #    signature and entitlements, and launches it with --self-test.
+      - name: Build and Native Package with Maven
+        run: mvn -B clean package -P ${{ matrix.platform-profile }}
+
+      # 5. macOS: repeat the signature gate and launch smoke test on the zip that
+      #    is actually uploaded, so a step that breaks the bundle after the build
+      #    checks (zipping included) cannot ship.
+      - name: Verify signature and entitlements of the zipped app
+        if: runner.os == 'macOS'
+        run: |
+          rm -rf "$RUNNER_TEMP/shipped"
+          ditto -x -k target/CertWizard-mac.zip "$RUNNER_TEMP/shipped"
+          bash src/main/packaging/macos/verify-app.sh "$RUNNER_TEMP/shipped/CertWizard.app"
+
+      - name: Launch smoke test of the zipped app
+        if: runner.os == 'macOS'
+        timeout-minutes: 5
+        run: '"$RUNNER_TEMP/shipped/CertWizard.app/Contents/MacOS/CertWizard" --self-test'
+
+      # 6. SHA-256 checksums of everything uploaded below
+      - name: Generate SHA-256 checksums
+        shell: bash
+        working-directory: target
+        env:
+          ARTIFACT_PATHS: ${{ matrix.artifact-path }}
+          CHECKSUM_FILE: ${{ matrix.artifact-name }}.sha256
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          files=()
+          while IFS= read -r pattern; do
+            pattern=${pattern#target/}
+            [ -n "$pattern" ] || continue
+            for f in $pattern; do files+=("$f"); done
+          done <<< "$ARTIFACT_PATHS"
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "::error::No artifacts matched: $ARTIFACT_PATHS"
+            exit 1
+          fi
+          if command -v sha256sum > /dev/null; then
+            sha256sum "${files[@]}" > "$CHECKSUM_FILE"
+          else
+            shasum -a 256 "${files[@]}" > "$CHECKSUM_FILE"
+          fi
+          cat "$CHECKSUM_FILE"
+          {
+            echo "### $CHECKSUM_FILE ($TAG)"
+            echo '```'
+            cat "$CHECKSUM_FILE"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # 7. Upload artifacts
       - name: Upload Artifact
         uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.artifact-name }}
-          path: ${{ matrix.artifact-path }}
+          path: |
+            ${{ matrix.artifact-path }}
+            target/${{ matrix.artifact-name }}.sha256
           if-no-files-found: error
