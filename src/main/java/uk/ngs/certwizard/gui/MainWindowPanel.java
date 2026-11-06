@@ -25,9 +25,8 @@ import net.sf.portecle.FPortecle;
 import net.sf.portecle.crypto.X509CertUtil;
 import net.sf.portecle.gui.SwingHelper;
 import net.sf.portecle.gui.error.DThrowable;
-import org.bouncycastle.openssl.PEMEncryptor;
-import org.bouncycastle.openssl.jcajce.JcaPEMWriter;
-import org.bouncycastle.openssl.jcajce.JcePEMEncryptorBuilder;
+import uk.ngs.ca.certificate.chain.CertChainBuilder;
+import uk.ngs.ca.certificate.chain.KeyStoreChains;
 import uk.ngs.ca.certificate.client.CAMotd;
 import uk.ngs.ca.certificate.client.PingService;
 import uk.ngs.ca.certificate.management.ClientKeyStoreCaServiceWrapper;
@@ -41,6 +40,7 @@ import uk.ngs.ca.tools.property.SysProperty;
 import uk.ngs.ca.util.CertificateExportGuiHelper;
 import uk.ngs.ca.util.CertificateImportGuiHelper;
 import uk.ngs.ca.util.CertificateRenewRevokeGuiHelper;
+import uk.ngs.ca.util.GlobusCredentialWriter;
 
 import javax.security.auth.x500.X500Principal;
 import javax.swing.*;
@@ -50,7 +50,6 @@ import java.beans.PropertyChangeEvent;
 import java.beans.PropertyChangeListener;
 import java.io.File;
 import java.io.FileOutputStream;
-import java.io.FileWriter;
 import java.io.IOException;
 import java.security.*;
 import java.security.cert.Certificate;
@@ -116,6 +115,12 @@ public class MainWindowPanel extends javax.swing.JPanel implements Observer {
         try {
             // Load the model (the CA keyStore). 
             this.caKeyStoreModel = ClientKeyStoreCaServiceWrapper.getInstance(this.PASSPHRASE);
+            // Entries saved by earlier versions hold only the user certificate.
+            // Fill in the intermediate and root certificates and save once
+            // (reStore keeps a backup copy of the previous file).
+            if (this.caKeyStoreModel.completeStoredCertificateChains() > 0) {
+                this.caKeyStoreModel.getClientKeyStore().reStore();
+            }
         } catch (KeyStoreException ex) {
             Logger.getLogger(MainWindowPanel.class.getName()).log(Level.SEVERE, null, ex);
             DThrowable.showAndWait(null, "KeyStoreException CA keyStore file", ex);
@@ -1129,31 +1134,29 @@ public class MainWindowPanel extends javax.swing.JPanel implements Observer {
             }
             // ok, here we can export the cert and key as pem files.
 
-            // first, delete files (if they already exist) 
-            fCertFile.delete();
-            fKeyFile.delete();
-            // get X509Cert and Private key of selected alias 
+            // get the full certificate chain (user cert, every intermediate,
+            // root) and the private key of the selected alias
             String alias = selectedKSEW.getAlias();
-            X509Certificate certificate = (X509Certificate) keyStoreCopy.getCertificate(alias);
+            CertChainBuilder.Result chain = KeyStoreChains.complete(
+                    keyStoreCopy.getCertificateChain(alias), CertChainBuilder.standard());
             PrivateKey privateKey = (PrivateKey) keyStoreCopy.getKey(alias, PASSPHRASE);
-            // Write the certificate 
-            JcaPEMWriter pemWriter = new JcaPEMWriter(new FileWriter(fCertFile));
-            pemWriter.writeObject(certificate);
-            pemWriter.close();
-
-            fCertFile.setReadable(true, true);
-            fCertFile.setExecutable(false, false);
-            fCertFile.setWritable(false, false);
-
-            JcaPEMWriter pw = new JcaPEMWriter(new FileWriter(fKeyFile));
-            SecureRandom rand = SecureRandom.getInstance("SHA1PRNG");
-            PEMEncryptor encryptor = new JcePEMEncryptorBuilder("DES-EDE3-CBC").setSecureRandom(rand).build(PASSPHRASE);
-            pw.writeObject(privateKey, encryptor);
-            pw.close();
-
-            fKeyFile.setReadable(true, false);
-            fKeyFile.setExecutable(false, false);
-            fKeyFile.setWritable(false, false);
+            if (chain == null || privateKey == null) {
+                JOptionPane.showMessageDialog(this, "The selected entry has no certificate or private key.",
+                        "Install usercert.pem userkey.pem", JOptionPane.ERROR_MESSAGE);
+                return;
+            }
+            if (!chain.isComplete()) {
+                int ret = JOptionPane.showConfirmDialog(this,
+                        "Not every issuer certificate could be found, so usercert.pem will hold an incomplete chain:\n"
+                        + String.join("\n", chain.getProblems()) + "\n\nInstall anyway?",
+                        "Incomplete certificate chain", JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE);
+                if (ret != JOptionPane.YES_OPTION) {
+                    return;
+                }
+            }
+            // Replaces both files: usercert.pem gets the whole chain,
+            // userkey.pem is created owner-only and left at mode 0400.
+            GlobusCredentialWriter.write(fCertFile.toPath(), fKeyFile.toPath(), chain.toArray(), privateKey, PASSPHRASE);
 
             JOptionPane.showMessageDialog(this, "[usercert.pem] and [userkey.pem] installed OK to '$USER_HOME/.globus/'",
                     "Install usercert.pem userkey.pem", JOptionPane.INFORMATION_MESSAGE);

@@ -32,6 +32,8 @@ import net.sf.portecle.gui.error.DThrowable;
 import net.sf.portecle.gui.password.DGetPassword;
 import org.bouncycastle.openssl.PEMParser;
 import org.bouncycastle.openssl.PasswordFinder;
+import uk.ngs.ca.certificate.chain.CertChainBuilder;
+import uk.ngs.ca.certificate.chain.KeyStoreChains;
 import uk.ngs.ca.certificate.management.ClientKeyStoreCaServiceWrapper;
 import uk.ngs.ca.certificate.management.KeyStoreEntryWrapper;
 import uk.ngs.ca.common.SystemStatus;
@@ -194,6 +196,15 @@ public class CertificateImportGuiHelper {
         if (privateKey == null || certChain == null) {
             // User did not select a key pair for import
             return null;
+        }
+
+        // PKCS#12 files often carry a partial or unordered chain (e.g. user
+        // cert + root with the intermediate missing). Store the full ordered
+        // chain - user cert, every intermediate, root - whenever it can be
+        // completed. Otherwise keep exactly what the file contained.
+        CertChainBuilder.Result completed = KeyStoreChains.complete(certChain, CertChainBuilder.standard());
+        if (KeyStoreChains.shouldReplace(certChain, completed)) {
+            certChain = completed.toArray();
         }
 
         // Get an alias for the new keystore entry
