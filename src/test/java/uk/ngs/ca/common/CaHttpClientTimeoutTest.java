@@ -63,8 +63,9 @@ public class CaHttpClientTimeoutTest {
         return "http://127.0.0.1:" + server.getAddress().getPort() + path;
     }
 
+    /** Timeout behaviour of a single attempt (retries are covered by CaHttpClientRetryTest). */
     private static CaHttpClient client(Duration connect, Duration request) {
-        return new CaHttpClient(new CaHttpClient.Settings(connect, request));
+        return new CaHttpClient(new CaHttpClient.Settings(connect, request, RetryPolicy.noRetries()));
     }
 
     @Test
@@ -116,7 +117,8 @@ public class CaHttpClientTimeoutTest {
             ex.close();
         });
         Clock fixed = Clock.fixed(Instant.parse("2026-11-06T09:03:01Z"), ZoneOffset.UTC);
-        CaHttpClient c = new CaHttpClient(new CaHttpClient.Settings(Duration.ofSeconds(2), Duration.ofSeconds(2)), fixed);
+        CaHttpClient c = new CaHttpClient(new CaHttpClient.Settings(Duration.ofSeconds(2), Duration.ofSeconds(2),
+                RetryPolicy.noRetries()), fixed);
         CaHttpResponse r = c.send(CaHttpRequest.get(url("/redirect")).build());
         assertEquals(302, r.getStatusCode());
         assertEquals("Fri, 06 Nov 2026 09:03:01 GMT", date.get());

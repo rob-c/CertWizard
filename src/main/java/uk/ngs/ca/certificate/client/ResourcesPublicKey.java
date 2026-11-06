@@ -84,8 +84,11 @@ public class ResourcesPublicKey {
             // We add a fake public key here as we're maintaining the same API endpoint for backwards compatibility with old clients
             resourceURL = resourceURL + "/pk";
 
+            // A POST only so the key need not go in the URL: the lookup does not
+            // change anything on the server, so it may be retried like a GET.
             CaHttpRequest request = CaHttpRequest.post(resourceURL)
                     .xmlBody(getRepresentation(this.encodedPublicKey))
+                    .readOnlyQuery()
                     .build();
 
             CaHttpResponse response = CaHttpClient.getDefault().send(request);

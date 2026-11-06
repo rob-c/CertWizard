@@ -18,6 +18,8 @@
  */
 package uk.ngs.ca.wire;
 
+import uk.ngs.ca.common.CaHttpClient;
+
 import java.io.IOException;
 import java.io.UncheckedIOException;
 
@@ -26,10 +28,16 @@ import java.io.UncheckedIOException;
  * static final fields when first loaded (e.g.
  * {@code OnlineCertRenewRequest.CSRURL}), so every test must see the same
  * port.
+ * <p>
+ * Also installs a default {@link CaHttpClient} that uses the production
+ * retry policy but does not really sleep and is not wired to the
+ * application-wide connectivity monitor, so one test's deliberate network
+ * failure cannot put later tests into "offline, fail fast" mode.
  */
 public final class SharedCaptureServer {
 
     private static RawHttpCaptureServer server;
+    private static final CaHttpClient TEST_CLIENT = TestClients.withoutTracking(new TestClients.RecordingSleeper());
 
     private SharedCaptureServer() {
     }
@@ -43,6 +51,7 @@ public final class SharedCaptureServer {
             }
             TestConfig.pointAllEndpointsAt(server.baseUrl());
         }
+        CaHttpClient.setDefault(TEST_CLIENT);
         server.reset();
         return server;
     }

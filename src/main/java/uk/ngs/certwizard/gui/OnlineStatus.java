@@ -18,48 +18,63 @@
  */
 package uk.ngs.certwizard.gui;
 
-import uk.ngs.ca.certificate.client.PingService;
+import uk.ngs.ca.common.ConnectivityMonitor;
 import uk.ngs.ca.common.GuiExecutor;
 
 import java.awt.*;
-import java.util.Date;
-import java.util.concurrent.Executors;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicBoolean;
+import java.time.Instant;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
+import java.util.function.Consumer;
 
 /**
- * Display the current online status of the tool and set the application's
- * <code>SystemStatus.ISONLINE</code> property. Thread safe.
+ * Display the current online status of the tool: online/offline, when the
+ * server was last checked and, while offline, when the next automatic
+ * re-check is due. The checks themselves (and the application's
+ * <code>SystemStatus</code> online flag) are driven by
+ * {@link ConnectivityMonitor}; the refresh button triggers an immediate
+ * re-check.
  *
  * @author David Meredith
  */
 public class OnlineStatus extends javax.swing.JPanel {
 
-    private final ScheduledExecutorService executor = Executors.newSingleThreadScheduledExecutor();
-    // Records whether the last ping check completed ok 
-    private final AtomicBoolean pingedOK = new AtomicBoolean(false);
+    private static final DateTimeFormatter TIME = DateTimeFormatter.ofPattern("HH:mm:ss").withZone(ZoneId.systemDefault());
+    private static final Color ONLINE_COLOUR = new Color(0, 153, 0);
+
+    private final ConnectivityMonitor monitor;
+    private final javax.swing.Timer countdownTimer;
+    // Always render the latest state: notifications from different threads
+    // may reach the EDT out of order.
+    private final Consumer<ConnectivityMonitor.Status> statusListener =
+            status -> GuiExecutor.instance().execute(this::refresh);
 
     /**
      * Creates new form OnlineStatus
      */
     public OnlineStatus() {
+        this.monitor = ConnectivityMonitor.getInstance();
         initComponents();
         this.timeoutTextField.setVisible(false);
         this.jLabel2.setVisible(false);
+        // A check is a single ping bounded by the connect timeout, so there
+        // is nothing to cancel any more.
+        this.cancelPingButton.setVisible(false);
+        this.connectButton.setToolTipText("Check the connection to the CA server now.");
+        // Refresh the "retrying in Ns" countdown.
+        this.countdownTimer = new javax.swing.Timer(1000, e -> refresh());
     }
 
     /**
-     * Starts the periodic Ping task in a background thread.
+     * Starts the connectivity checks: an immediate ping, then every 10
+     * minutes while online, backing off from 15s to 10 minutes while
+     * offline (see {@link ConnectivityMonitor}).
      */
     public void startScheduledPingCheckTask() {
-        // DM: I wanted to use a SwingWorker and a property change listener on the
-        // SwingWorker 'state' property as this gives more control, however
-        // this top 25 bug (SwingWorker deadlocks due to 
-        // one thread in the swingworker-pool) caused me issues so i use a 
-        // simple runnable instead. 
-        // http://bugs.sun.com/view_bug.do;jsessionid=e13cfc6ea10a4ffffffffce8c9244b60e54d?bug_id=6880336 
-        executor.scheduleWithFixedDelay(new PingCheckTask(), 0, 10, TimeUnit.MINUTES);
+        monitor.addListener(statusListener);
+        refresh();
+        countdownTimer.start();
+        monitor.start();
     }
 
     /**
@@ -136,7 +151,7 @@ public class OnlineStatus extends javax.swing.JPanel {
 
     private void connectButtonActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_connectButtonActionPerformed
         //System.setProperty("http.proxyHost", "wwwcache.dl.ac.uk");
-        this.doPingCheckActionPerformed();
+        monitor.checkSoon(); // runs in the background; the listener updates the label
     }//GEN-LAST:event_connectButtonActionPerformed
 
     private void timeoutTextFieldActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_timeoutTextFieldActionPerformed
@@ -148,7 +163,7 @@ public class OnlineStatus extends javax.swing.JPanel {
     }//GEN-LAST:event_timeoutTextFieldFocusLost
 
     private void cancelPingButtonActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_cancelPingButtonActionPerformed
-        this.updateGUI(false);
+        refresh();
     }//GEN-LAST:event_cancelPingButtonActionPerformed
 
     // Variables declaration - do not modify//GEN-BEGIN:variables
@@ -162,56 +177,40 @@ public class OnlineStatus extends javax.swing.JPanel {
 
 
     /**
-     * Attempt a ping check and update our global state.
+     * Show the monitor's current status. Must run on the EDT.
      */
-    private void doPingCheckActionPerformed() {
-        // Clicking to start this task should not clash with another ping task 
-        // because the button that calls this method is disabled when a task
-        Runnable sleepTask = new PingCheckTask();
-        Thread t = new Thread(sleepTask);
-        t.setDaemon(true);
-        t.start();
+    private void refresh() {
+        ConnectivityMonitor.Status status = monitor.getStatus();
+        onlineLabel.setText(describe(status, Instant.now()));
+        onlineLabel.setToolTipText(status.getLastError());
+        onlineLabel.setForeground(status.getState() == ConnectivityMonitor.State.ONLINE && !status.isChecking()
+                ? ONLINE_COLOUR : Color.RED);
+        connectButton.setEnabled(!status.isChecking());
     }
 
-    /**
-     * Updates the GUI. Guarantees to run the GUI updates in the AWT event
-     * dispatch thread.
-     *
-     * @param running
-     */
-    private void updateGUI(final boolean running) {
-        GuiExecutor.instance().execute(() -> {
-            if (running) {
-                onlineLabel.setText("Pinging Server...");
-                onlineLabel.setForeground(Color.RED);
-                connectButton.setEnabled(false);
-                cancelPingButton.setEnabled(true);
-            } else {
-                Date lastOnline = new Date();
-                if (pingedOK.get()) {
-                    onlineLabel.setText("Last online check at:  " + lastOnline);
-                    onlineLabel.setForeground(new Color(0, 153, 0));
-                } else {
-                    onlineLabel.setText("Last online check failed at:  " + lastOnline);
-                    onlineLabel.setForeground(Color.RED);
-                }
-                connectButton.setEnabled(true);
-                cancelPingButton.setEnabled(false);
-            }
-        });
-    }
-
-    private class PingCheckTask implements Runnable {
-
-        @Override
-        public void run() {
-            try {
-                updateGUI(true);
-                // call the ping in new thread
-                pingedOK.set(PingService.getPingService().isPingService());
-            } finally {
-                updateGUI(false);
-            }
+    /** The status line text, e.g. "Offline - cannot reach the CA server. Retrying in 25s". */
+    static String describe(ConnectivityMonitor.Status status, Instant now) {
+        if (status.isChecking()) {
+            return "Checking the connection to the CA server...";
         }
+        String last = status.getLastCheck() == null ? "" : " (last checked at " + TIME.format(status.getLastCheck()) + ")";
+        switch (status.getState()) {
+            case ONLINE:
+                return "Online" + last;
+            case OFFLINE:
+                long secs = status.secondsUntilNextCheck(now);
+                String retry = secs < 0 ? " Click refresh to retry."
+                        : " Retrying in " + formatDelay(secs) + ", or click refresh to retry now.";
+                return "Offline - cannot reach the CA server." + retry;
+            default:
+                return "Not yet checked.";
+        }
+    }
+
+    static String formatDelay(long secs) {
+        if (secs < 60) {
+            return secs + "s";
+        }
+        return String.format("%dm %02ds", secs / 60, secs % 60);
     }
 }

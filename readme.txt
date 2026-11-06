@@ -10,8 +10,9 @@ Maven
 netbeans 8.2+ (it's used for building the GUI)
 
 CertWizard is a java client tool to access and manage user/host certificates. 
-It is developed based on Restlet APIs (see http://www.restlet.org/) and is the
-client gui for the corresponding CA-Server.  
+It is the client gui for the corresponding (Restlet based) CA-Server, which it
+talks to over HTTPS using the JDK's java.net.http client (see
+uk.ngs.ca.common.CaHttpClient for timeouts, retries and offline handling).  
 
 CertWizard supports the following functions:
 

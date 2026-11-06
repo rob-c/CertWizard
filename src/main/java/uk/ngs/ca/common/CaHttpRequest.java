@@ -25,6 +25,7 @@ import java.net.URI;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
 
 /**
  * An immutable request to the CA server.
@@ -33,7 +34,9 @@ import java.util.List;
  * every CertWizard request has always carried: {@code Accept: *}{@code /*},
  * {@code User-Agent} (from {@code uk.ngs.ca.request.useragent}) and
  * {@code LocalHost} (the canonical local host name, empty if it cannot be
- * resolved). {@link CaHttpClient} adds a {@code Date} header when sending.
+ * resolved; cached for 10 minutes because the reverse DNS lookup can stall
+ * for seconds when the network is down). {@link CaHttpClient} adds a
+ * {@code Date} header when sending.
  * Header names keep their case exactly as given.
  */
 public final class CaHttpRequest {
@@ -41,16 +44,26 @@ public final class CaHttpRequest {
     /** Content type of every XML request body. */
     public static final String XML_CONTENT_TYPE = "application/xml; charset=UTF-8";
 
+    private static final long HOST_NAME_TTL_NANOS = TimeUnit.MINUTES.toNanos(10);
+    private static volatile String cachedHostName;
+    private static volatile long cachedHostNameAt;
+
     private final String method;
     private final URI uri;
     private final List<String[]> headers;
     private final byte[] body;
+    private final Boolean idempotentOverride;
+    private final int maxAttempts;
+    private final boolean connectivityProbe;
 
     private CaHttpRequest(Builder b) {
         this.method = b.method;
         this.uri = b.uri;
         this.headers = Collections.unmodifiableList(new ArrayList<>(b.headers));
         this.body = b.body;
+        this.idempotentOverride = b.idempotentOverride;
+        this.maxAttempts = b.maxAttempts;
+        this.connectivityProbe = b.connectivityProbe;
     }
 
     /** A GET request with the standard CertWizard headers. */
@@ -61,6 +74,21 @@ public final class CaHttpRequest {
     /** A POST request with the standard CertWizard headers. */
     public static Builder post(String url) {
         return new Builder("POST", url).standardHeaders();
+    }
+
+    /** The local host name for the LocalHost header (null if unresolvable). */
+    static String localHostName() {
+        String name = cachedHostName;
+        long now = System.nanoTime();
+        if (name != null && now - cachedHostNameAt < HOST_NAME_TTL_NANOS) {
+            return name;
+        }
+        name = ClientHostName.getHostName();
+        if (name != null) {
+            cachedHostName = name;
+            cachedHostNameAt = now;
+        }
+        return name;
     }
 
     /** A request with no headers pre-populated. */
@@ -97,11 +125,28 @@ public final class CaHttpRequest {
     }
 
     /**
-     * Whether repeating this request is harmless: GET, HEAD and OPTIONS are
-     * idempotent; POST, PUT, DELETE and everything else are not.
+     * Whether repeating this request is harmless. By default this follows the
+     * HTTP method: GET, HEAD and OPTIONS are idempotent; POST, PUT, DELETE and
+     * everything else are not. See {@link Builder#readOnlyQuery()}.
      */
     public boolean isIdempotent() {
+        if (idempotentOverride != null) {
+            return idempotentOverride;
+        }
         return "GET".equals(method) || "HEAD".equals(method) || "OPTIONS".equals(method);
+    }
+
+    /** Per-request attempt limit, or 0 to use the client's retry policy. */
+    public int getMaxAttempts() {
+        return maxAttempts;
+    }
+
+    /**
+     * True for the connectivity check itself (the ping): it is never
+     * short-circuited when the server is known to be unreachable.
+     */
+    public boolean isConnectivityProbe() {
+        return connectivityProbe;
     }
 
     @Override
@@ -115,6 +160,9 @@ public final class CaHttpRequest {
         private final URI uri;
         private final List<String[]> headers = new ArrayList<>();
         private byte[] body;
+        private Boolean idempotentOverride;
+        private int maxAttempts;
+        private boolean connectivityProbe;
 
         private Builder(String method, String url) {
             this.method = method;
@@ -124,7 +172,7 @@ public final class CaHttpRequest {
         private Builder standardHeaders() {
             header("Accept", "*/*");
             header("User-Agent", SysProperty.getValue("uk.ngs.ca.request.useragent"));
-            header("LocalHost", ClientHostName.getHostName());
+            header("LocalHost", localHostName());
             return this;
         }
 
@@ -150,6 +198,31 @@ public final class CaHttpRequest {
         public Builder xmlBody(Document document) {
             this.body = SafeXml.serialize(document);
             return header("Content-Type", XML_CONTENT_TYPE);
+        }
+
+        /**
+         * Mark a POST that only reads server state (the public-key lookup) as
+         * safe to repeat, so it gets the same retry treatment as a GET. Never
+         * use this for a request that creates or changes anything.
+         */
+        public Builder readOnlyQuery() {
+            this.idempotentOverride = Boolean.TRUE;
+            return this;
+        }
+
+        /** Limit the number of attempts for this request (1 = no retries). */
+        public Builder maxAttempts(int attempts) {
+            if (attempts < 1) {
+                throw new IllegalArgumentException("attempts must be >= 1");
+            }
+            this.maxAttempts = attempts;
+            return this;
+        }
+
+        /** Mark this request as the connectivity check (see {@link #isConnectivityProbe()}). */
+        public Builder connectivityProbe() {
+            this.connectivityProbe = true;
+            return this;
         }
 
         public CaHttpRequest build() {

@@ -29,6 +29,7 @@ import uk.ngs.ca.certificate.management.ClientKeyStoreCaServiceWrapper;
 import uk.ngs.ca.certificate.management.KeyStoreEntryWrapper;
 import uk.ngs.ca.common.CAKeyPair;
 import uk.ngs.ca.common.HashUtil;
+import uk.ngs.ca.common.OffEdt;
 import uk.ngs.ca.common.Pair;
 import uk.ngs.ca.info.CAInfo;
 
@@ -108,7 +109,7 @@ public class Apply extends javax.swing.JDialog {
             this.authKey = null;
         }
 
-        CAInfo caInfo = new CAInfo();
+        CAInfo caInfo = OffEdt.call(null, "Fetching the list of RAs from the CA server...", CAInfo::new);
         RAs = caInfo.getRAs(); // concat of: "OU+" "+L"   
         javax.swing.DefaultComboBoxModel m = new javax.swing.DefaultComboBoxModel(RAs);
         cmbSelectRA.setModel(m);
@@ -164,7 +165,8 @@ public class Apply extends javax.swing.JDialog {
             jLabel5.setText(text);
 
         } else {
-            if (!(PingService.getPingService().isPingService())) {
+            if (!OffEdt.call(this, "Checking the connection to the CA server...",
+                    () -> PingService.getPingService().isPingService())) {
                 JOptionPane.showMessageDialog(this, "Cannot connect to the CA Server. Please ensure that you are connected to the Internet.\n"
                         + "If you are connected to the Internet but still unable to connect to the CA Server, please check your firewall\n"
                         + "settings and ensure you allow Java to access to the Internet. If problem still persists, please contact\n"
@@ -227,15 +229,16 @@ public class Apply extends javax.swing.JDialog {
         boolean success;
         String message;
         if (CertificateRequestCreator.TYPE.USER.equals(type)) {
-            OnlineUserCertRequest csrRequest = new OnlineUserCertRequest(
-                    pkcs10, HashUtil.getHash(String.valueOf(pin)), email);
+            OnlineUserCertRequest csrRequest = OffEdt.call(this, "Submitting your certificate request...",
+                    () -> new OnlineUserCertRequest(pkcs10, HashUtil.getHash(String.valueOf(pin)), email));
             message = csrRequest.getMessage();
             success = csrRequest.isCSRREquestSuccess();
         } else {
             // Send PKCS#10 CSR to server. Provide authCert/Key for PPPK . 
             OnlineHostCertRequest onlineHostCertReq = new OnlineHostCertRequest(authCert, authKey,
                     pkcs10, HashUtil.getHash(String.valueOf(pin)), email);
-            Pair<Boolean, String> result = onlineHostCertReq.doHostCSR();
+            Pair<Boolean, String> result = OffEdt.call(this, "Submitting your host certificate request...",
+                    onlineHostCertReq::doHostCSR);
             message = result.second;
             success = result.first;
         }

@@ -28,6 +28,7 @@ import uk.ngs.ca.certificate.management.ClientKeyStoreCaServiceWrapper;
 import uk.ngs.ca.certificate.management.KeyStoreEntryWrapper;
 import uk.ngs.ca.common.CAKeyPair;
 import uk.ngs.ca.common.CertUtil;
+import uk.ngs.ca.common.OffEdt;
 import uk.ngs.ca.common.Pair;
 import uk.ngs.certwizard.gui.GeneralMessageDialog;
 
@@ -84,7 +85,7 @@ public class CertificateRenewRevokeGuiHelper {
         // to guard against TOCTAU attacks and stale data (when was the online status last fetched). 
         try {
             parentComponent.setCursor(Cursor.getPredefinedCursor(Cursor.WAIT_CURSOR));
-            if (caKeyStoreModel.onlineUpdateKeyStoreEntry(selectedKSEW)) {
+            if (onlineUpdate(selectedKSEW)) {
                 caKeyStoreModel.getClientKeyStore().reStore();
             }
         } finally {
@@ -125,19 +126,24 @@ public class CertificateRenewRevokeGuiHelper {
                     cert_id, reason);
             // do the revokation with the CA and block (note, this has 
             // no interaction with the keystore) 
-            final boolean revoked = revokeRequest.doPosts();
+            final boolean revoked = OffEdt.call(parentComponent, "Submitting the revocation request...",
+                    revokeRequest::doPosts);
 
             // Just reload the selected entry rather than refreshing all   
-            if (caKeyStoreModel.onlineUpdateKeyStoreEntry(selectedKSEW)) {
+            if (onlineUpdate(selectedKSEW)) {
                 // Don't need to reStore (no online state is saved to file)
             }
 
             parentComponent.setCursor(Cursor.getPredefinedCursor(Cursor.DEFAULT_CURSOR));
 
             if (revoked) {
-                JOptionPane.showMessageDialog(parentComponent, revokeRequest.getMessage(), "Certificate revoked", JOptionPane.INFORMATION_MESSAGE);
+                String message = revokeRequest.getMessage() != null ? revokeRequest.getMessage()
+                        : "Your revocation request has been submitted to the CA.";
+                JOptionPane.showMessageDialog(parentComponent, message, "Certificate revoked", JOptionPane.INFORMATION_MESSAGE);
                 return true;
             } else {
+                GeneralMessageDialog.showAndWait(parentComponent, "The revocation request failed: " + revokeRequest.getMessage(),
+                        "Revocation Error", JOptionPane.ERROR_MESSAGE);
                 return false;
             }
         } finally {
@@ -161,7 +167,7 @@ public class CertificateRenewRevokeGuiHelper {
         // to guard against TOCTAU attacks and stale data (when was the online status last fetched). 
         try {
             parentComponent.setCursor(Cursor.getPredefinedCursor(Cursor.WAIT_CURSOR));
-            if (caKeyStoreModel.onlineUpdateKeyStoreEntry(selectedKSEW)) {
+            if (onlineUpdate(selectedKSEW)) {
                 caKeyStoreModel.getClientKeyStore().reStore();
             }
         } finally {
@@ -311,7 +317,8 @@ public class CertificateRenewRevokeGuiHelper {
             KeyPair csrKeyPair = CAKeyPair.getNewKeyPair();
             // Submit the renewal
             OnlineCertRenewRequest renewal = new OnlineCertRenewRequest(toRenewCert, toRenewPrivateKey, csrKeyPair, email);
-            Pair<Boolean, String> result = renewal.doRenewal();
+            Pair<Boolean, String> result = OffEdt.call(parentComponent, "Submitting the renewal request...",
+                    renewal::doRenewal);
 
             // If submitted ok, save a new self-signed cert in the keyStore 
             // created with the PKCS#10 key pair and ReStore. 
@@ -339,6 +346,14 @@ public class CertificateRenewRevokeGuiHelper {
         } finally {
             parentComponent.setCursor(Cursor.getPredefinedCursor(Cursor.DEFAULT_CURSOR));
         }
+    }
+
+    /**
+     * Refresh the entry's status from the CA without blocking the EDT.
+     */
+    private boolean onlineUpdate(KeyStoreEntryWrapper entry) throws KeyStoreException {
+        return OffEdt.call(parentComponent, "Updating the certificate status from the CA server...",
+                () -> caKeyStoreModel.onlineUpdateKeyStoreEntry(entry));
     }
 
     /**

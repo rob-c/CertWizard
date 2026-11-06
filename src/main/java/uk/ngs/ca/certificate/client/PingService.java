@@ -23,7 +23,7 @@ import org.apache.logging.log4j.Logger;
 import uk.ngs.ca.common.CaHttpClient;
 import uk.ngs.ca.common.CaHttpRequest;
 import uk.ngs.ca.common.CaHttpResponse;
-import uk.ngs.ca.common.SystemStatus;
+import uk.ngs.ca.common.ConnectivityMonitor;
 import uk.ngs.ca.tools.property.SysProperty;
 
 import java.io.IOException;
@@ -60,25 +60,21 @@ public final class PingService {
     }
 
     /**
-     * Ping the CA server with a ping request.
+     * Ping the CA server now and update the application's online status
+     * (via {@link ConnectivityMonitor#checkNow()}, which also re-schedules
+     * the automatic checks and shares one ping between concurrent callers).
+     * Blocks for up to the connect timeout: never call on the Swing EDT.
      *
      * @return true if successful ping otherwise false.
      */
     public boolean isPingService() {
-        boolean isPing = false;
-        try {
-            isPing = ping();
-        } catch (IOException ex) {
-            logger.info("Ping failed: " + ex.getMessage());
-        }
-        // change the systems online status and update any observers.
-        SystemStatus.getInstance().setIsOnline(isPing);
-        return isPing;
+        return ConnectivityMonitor.getInstance().checkNow();
     }
 
     /**
-     * Send one ping request (no retries) and report whether the server
-     * answered 200 OK. Does not update any state.
+     * Send one ping request (no retries; the connectivity monitor provides
+     * the backoff) and report whether the server answered 200 OK. Does not
+     * update any state and is never short-circuited by the offline state.
      *
      * @return true if the server answered 200, false for any other status
      * @throws IOException if no response was received
@@ -86,7 +82,11 @@ public final class PingService {
     public boolean ping() throws IOException {
         String pingURL = SysProperty.getValue("uk.ngs.ca.request.pingservice.url");
         logger.debug("pinging URL [" + pingURL + "]");
-        CaHttpResponse response = CaHttpClient.getDefault().send(CaHttpRequest.get(pingURL).build());
+        CaHttpRequest request = CaHttpRequest.get(pingURL)
+                .maxAttempts(1)
+                .connectivityProbe()
+                .build();
+        CaHttpResponse response = CaHttpClient.getDefault().send(request);
         return response.getStatusCode() == 200;
     }
 }
