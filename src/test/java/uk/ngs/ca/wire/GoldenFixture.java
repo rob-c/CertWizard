@@ -222,6 +222,13 @@ public final class GoldenFixture {
         }
 
         String actualBody = actual.bodyAsString().replace("\r\n", "\n");
+        if ("\r\n".equals(System.lineSeparator())) {
+            // CSR PEM text is generated with the platform line separator
+            // (unchanged from the Restlet-era client), and XML-escapes CR as
+            // &#13;. The fixtures were recorded on a LF platform, so undo
+            // exactly that on CRLF platforms - and nothing else.
+            actualBody = actualBody.replace("&#13;\n", "\n");
+        }
         String expectedBody = expected.body.replace("\r\n", "\n");
         if (!toPattern(expectedBody).matcher(actualBody).matches()) {
             problems.add("body differs:\n  expected: " + expectedBody + "\n  actual:   " + actualBody);
