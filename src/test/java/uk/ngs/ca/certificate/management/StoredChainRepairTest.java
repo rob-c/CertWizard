@@ -34,6 +34,7 @@ public class StoredChainRepairTest {
     @Test
     public void leafOnlyEntriesAreUpgradedAndSavedWithBackup() throws Exception {
         File dataDir = tmp.newFolder("ca-data");
+        ClientKeyStoreCaServiceWrapper.resetForTesting();
         SystemStatus.getInstance().setCwDataDirectory(dataDir);
         assertEquals(dataDir.getAbsolutePath(), SystemStatus.getInstance().getCwDataDirectory().getAbsolutePath());
 

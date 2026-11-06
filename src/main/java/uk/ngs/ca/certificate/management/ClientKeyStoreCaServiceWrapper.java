@@ -105,6 +105,15 @@ public class ClientKeyStoreCaServiceWrapper {
         return instance;
     }
 
+    /**
+     * Forget the shared instances. For tests only: lets each test load its
+     * own keystore from its own temporary data directory.
+     */
+    public static synchronized void resetForTesting() {
+        instance = null;
+        ClientKeyStore.resetForTesting();
+    }
+
     private ClientKeyStoreCaServiceWrapper(char[] passphrase) throws KeyStoreException, IOException, CertificateException {
         this.mKeystorePASSPHRASE = passphrase;
         try {
