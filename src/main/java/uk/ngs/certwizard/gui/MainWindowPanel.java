@@ -32,6 +32,7 @@ import uk.ngs.ca.certificate.client.PingService;
 import uk.ngs.ca.certificate.management.ClientKeyStoreCaServiceWrapper;
 import uk.ngs.ca.certificate.management.KeyStoreEntryWrapper;
 import uk.ngs.ca.certificate.management.KeyStoreEntryWrapper.KEYSTORE_ENTRY_TYPE;
+import uk.ngs.ca.certificate.verify.ExportVerifier;
 import uk.ngs.ca.common.CertUtil;
 import uk.ngs.ca.common.GuiExecutor;
 import uk.ngs.ca.common.SystemStatus;
@@ -1157,6 +1158,14 @@ public class MainWindowPanel extends javax.swing.JPanel implements Observer {
             // Replaces both files: usercert.pem gets the whole chain,
             // userkey.pem is created owner-only and left at mode 0400.
             GlobusCredentialWriter.write(fCertFile.toPath(), fKeyFile.toPath(), chain.toArray(), privateKey, PASSPHRASE);
+            java.util.List<String> problems = ExportVerifier.verifyGlobus(fCertFile.toPath(), fKeyFile.toPath(),
+                    PASSPHRASE, chain.toArray(), privateKey);
+            if (!problems.isEmpty()) {
+                JOptionPane.showMessageDialog(this, "The installed files failed verification when read back:\n - "
+                        + String.join("\n - ", problems) + "\n\nDo not rely on them.",
+                        "Install verification FAILED", JOptionPane.ERROR_MESSAGE);
+                return;
+            }
 
             JOptionPane.showMessageDialog(this, "[usercert.pem] and [userkey.pem] installed OK to '$USER_HOME/.globus/'",
                     "Install usercert.pem userkey.pem", JOptionPane.INFORMATION_MESSAGE);
@@ -1377,6 +1386,7 @@ public class MainWindowPanel extends javax.swing.JPanel implements Observer {
         btnChangePasswd = new javax.swing.JButton();
         jComboBox1 = new javax.swing.JComboBox();
         btnRefreshAll = new javax.swing.JButton();
+        btnVerify = new javax.swing.JButton();
         btnCancelOnlineUpdate = new javax.swing.JButton();
         labelOnlineUpdate = new javax.swing.JLabel();
         jProgressBar1 = new javax.swing.JProgressBar();
@@ -1772,6 +1782,11 @@ public class MainWindowPanel extends javax.swing.JPanel implements Observer {
         btnRefreshAll.setEnabled(false);
         btnRefreshAll.addActionListener(this::btnRefreshAllActionPerformed);
 
+        btnVerify.setText("Verify");
+        btnVerify.setToolTipText("Check the selected certificate: key match, full chain, trust, validity, "
+                + "key strength, signature algorithms, usage and revocation.");
+        btnVerify.addActionListener(this::btnVerifyActionPerformed);
+
         org.jdesktop.layout.GroupLayout jPanel2Layout = new org.jdesktop.layout.GroupLayout(jPanel2);
         jPanel2.setLayout(jPanel2Layout);
         jPanel2Layout.setHorizontalGroup(
@@ -1782,7 +1797,9 @@ public class MainWindowPanel extends javax.swing.JPanel implements Observer {
                                 .addPreferredGap(org.jdesktop.layout.LayoutStyle.UNRELATED)
                                 .add(jComboBox1, 0, org.jdesktop.layout.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)
                                 .addPreferredGap(org.jdesktop.layout.LayoutStyle.RELATED)
-                                .add(btnRefreshAll, org.jdesktop.layout.GroupLayout.PREFERRED_SIZE, 37, org.jdesktop.layout.GroupLayout.PREFERRED_SIZE))
+                                .add(btnRefreshAll, org.jdesktop.layout.GroupLayout.PREFERRED_SIZE, 37, org.jdesktop.layout.GroupLayout.PREFERRED_SIZE)
+                                .addPreferredGap(org.jdesktop.layout.LayoutStyle.RELATED)
+                                .add(btnVerify))
         );
         jPanel2Layout.setVerticalGroup(
                 jPanel2Layout.createParallelGroup(org.jdesktop.layout.GroupLayout.LEADING)
@@ -1790,6 +1807,7 @@ public class MainWindowPanel extends javax.swing.JPanel implements Observer {
                                 .addContainerGap()
                                 .add(jPanel2Layout.createParallelGroup(org.jdesktop.layout.GroupLayout.LEADING)
                                         .add(btnRefreshAll)
+                                        .add(btnVerify)
                                         .add(jPanel2Layout.createParallelGroup(org.jdesktop.layout.GroupLayout.BASELINE)
                                                 .add(jComboBox1, org.jdesktop.layout.GroupLayout.PREFERRED_SIZE, 28, org.jdesktop.layout.GroupLayout.PREFERRED_SIZE)
                                                 .add(btnChangePasswd)))
@@ -2036,6 +2054,15 @@ public class MainWindowPanel extends javax.swing.JPanel implements Observer {
         }
     }//GEN-LAST:event_btnRefreshAllActionPerformed
 
+    private void btnVerifyActionPerformed(java.awt.event.ActionEvent evt) {
+        if (this.jComboBox1.getSelectedIndex() == -1) {
+            JOptionPane.showMessageDialog(this, "Please select a certificate!", "No certificate selected", JOptionPane.INFORMATION_MESSAGE);
+            return;
+        }
+        KeyStoreEntryWrapper selectedKSEW = (KeyStoreEntryWrapper) this.jComboBox1.getSelectedItem();
+        VerifyCertificateAction.run(this, this.caKeyStoreModel.getClientKeyStore(), selectedKSEW.getAlias(), this.PASSPHRASE);
+    }
+
     private void btnCancelOnlineUpdateActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_btnCancelOnlineUpdateActionPerformed
         doCancelOnlineUpdateAction();
     }//GEN-LAST:event_btnCancelOnlineUpdateActionPerformed
@@ -2064,6 +2091,7 @@ public class MainWindowPanel extends javax.swing.JPanel implements Observer {
     private javax.swing.JButton btnRefreshAll;
     private javax.swing.JButton btnRenew;
     private javax.swing.JButton btnRevoke;
+    private javax.swing.JButton btnVerify;
     private javax.swing.JTextField caCertStatusTextField;
     private javax.swing.JTextField certEmailTextField;
     private javax.swing.JLabel certificateTypeLabel;
