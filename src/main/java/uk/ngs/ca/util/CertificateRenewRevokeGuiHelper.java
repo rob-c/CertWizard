@@ -29,6 +29,7 @@ import uk.ngs.ca.certificate.management.KeyStoreEntryWrapper;
 import uk.ngs.ca.certificate.renew.AutoRenewService;
 import uk.ngs.ca.certificate.renew.RenewalLedger;
 import uk.ngs.ca.certificate.renew.RenewalSubmitter;
+import uk.ngs.ca.common.OffEdt;
 import uk.ngs.ca.common.SystemStatus;
 import uk.ngs.certwizard.gui.GeneralMessageDialog;
 
@@ -82,7 +83,7 @@ public class CertificateRenewRevokeGuiHelper {
         // to guard against TOCTAU attacks and stale data (when was the online status last fetched). 
         try {
             parentComponent.setCursor(Cursor.getPredefinedCursor(Cursor.WAIT_CURSOR));
-            if (caKeyStoreModel.onlineUpdateKeyStoreEntry(selectedKSEW)) {
+            if (onlineUpdate(selectedKSEW)) {
                 caKeyStoreModel.getClientKeyStore().reStore();
             }
         } finally {
@@ -123,19 +124,24 @@ public class CertificateRenewRevokeGuiHelper {
                     cert_id, reason);
             // do the revokation with the CA and block (note, this has 
             // no interaction with the keystore) 
-            final boolean revoked = revokeRequest.doPosts();
+            final boolean revoked = OffEdt.call(parentComponent, "Submitting the revocation request...",
+                    revokeRequest::doPosts);
 
             // Just reload the selected entry rather than refreshing all   
-            if (caKeyStoreModel.onlineUpdateKeyStoreEntry(selectedKSEW)) {
+            if (onlineUpdate(selectedKSEW)) {
                 // Don't need to reStore (no online state is saved to file)
             }
 
             parentComponent.setCursor(Cursor.getPredefinedCursor(Cursor.DEFAULT_CURSOR));
 
             if (revoked) {
-                JOptionPane.showMessageDialog(parentComponent, revokeRequest.getMessage(), "Certificate revoked", JOptionPane.INFORMATION_MESSAGE);
+                String message = revokeRequest.getMessage() != null ? revokeRequest.getMessage()
+                        : "Your revocation request has been submitted to the CA.";
+                JOptionPane.showMessageDialog(parentComponent, message, "Certificate revoked", JOptionPane.INFORMATION_MESSAGE);
                 return true;
             } else {
+                GeneralMessageDialog.showAndWait(parentComponent, "The revocation request failed: " + revokeRequest.getMessage(),
+                        "Revocation Error", JOptionPane.ERROR_MESSAGE);
                 return false;
             }
         } finally {
@@ -159,7 +165,7 @@ public class CertificateRenewRevokeGuiHelper {
         // to guard against TOCTAU attacks and stale data (when was the online status last fetched). 
         try {
             parentComponent.setCursor(Cursor.getPredefinedCursor(Cursor.WAIT_CURSOR));
-            if (caKeyStoreModel.onlineUpdateKeyStoreEntry(selectedKSEW)) {
+            if (onlineUpdate(selectedKSEW)) {
                 caKeyStoreModel.getClientKeyStore().reStore();
             }
         } finally {
@@ -270,7 +276,10 @@ public class CertificateRenewRevokeGuiHelper {
             parentComponent.setCursor(Cursor.getPredefinedCursor(Cursor.WAIT_CURSOR));
             // New key pair, PKCS#10 signed for the same DN, authenticated with
             // the current key; on success a placeholder entry is saved.
-            RenewalSubmitter.Result result = submitter.submit(selectedKSEW, email, newCsrRenewalAlias);
+            final String chosenAlias = newCsrRenewalAlias;
+            final String chosenEmail = email;
+            RenewalSubmitter.Result result = OffEdt.call(parentComponent, "Submitting the renewal request...",
+                    () -> submitter.submit(selectedKSEW, chosenEmail, chosenAlias));
             recordInRenewalLedger(toRenewCert, result);
             parentComponent.setCursor(Cursor.getPredefinedCursor(Cursor.DEFAULT_CURSOR));
             switch (result.getOutcome()) {
@@ -318,6 +327,14 @@ public class CertificateRenewRevokeGuiHelper {
             java.util.logging.Logger.getLogger(CertificateRenewRevokeGuiHelper.class.getName())
                     .log(java.util.logging.Level.WARNING, "Could not record renewal in the auto-renew ledger", e);
         }
+    }
+
+    /**
+     * Refresh the entry's status from the CA without blocking the EDT.
+     */
+    private boolean onlineUpdate(KeyStoreEntryWrapper entry) throws KeyStoreException {
+        return OffEdt.call(parentComponent, "Updating the certificate status from the CA server...",
+                () -> caKeyStoreModel.onlineUpdateKeyStoreEntry(entry));
     }
 
     /**

@@ -18,18 +18,15 @@
  */
 package uk.ngs.ca.certificate.client;
 
-import org.restlet.Client;
-import org.restlet.Request;
-import org.restlet.Response;
-import org.restlet.data.*;
-import org.restlet.ext.xml.DomRepresentation;
-import org.restlet.representation.Representation;
-import org.restlet.util.Series;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.w3c.dom.Document;
 import org.w3c.dom.Element;
-import uk.ngs.ca.common.ClientHostName;
+import uk.ngs.ca.common.CaHttpClient;
+import uk.ngs.ca.common.CaHttpRequest;
+import uk.ngs.ca.common.CaHttpResponse;
 import uk.ngs.ca.common.EncryptUtil;
-import uk.ngs.ca.common.RestletClient;
+import uk.ngs.ca.common.SafeXml;
 import uk.ngs.ca.tools.property.SysProperty;
 
 import java.security.PublicKey;
@@ -38,6 +35,8 @@ import java.security.PublicKey;
  * @author xw75 Xiao Wang
  */
 public class ResourcesPublicKey {
+
+    private static final Logger logger = LogManager.getLogger(ResourcesPublicKey.class);
 
     /* 
      * Returned Document has the form:
@@ -81,22 +80,20 @@ public class ResourcesPublicKey {
             // call CA server and ask 'do you know about a certficate with this pub key'
             // url = /resources/resource/publickey/<base64encodedpubkey>
             String resourceURL = SysProperty.getValue("uk.ngs.ca.request.resource.publickey");
-            Client c = RestletClient.getClient();
 
             // We add a fake public key here as we're maintaining the same API endpoint for backwards compatibility with old clients
             resourceURL = resourceURL + "/pk";
 
-            Request request = new Request(Method.POST, new Reference(resourceURL), getRepresentation(this.encodedPublicKey));
+            // A POST only so the key need not go in the URL: the lookup does not
+            // change anything on the server, so it may be retried like a GET.
+            CaHttpRequest request = CaHttpRequest.post(resourceURL)
+                    .xmlBody(getRepresentation(this.encodedPublicKey))
+                    .readOnlyQuery()
+                    .build();
 
-            Series<Header> headers = request.getHeaders();
-            headers.set("LocalHost", ClientHostName.getHostName());
-            org.restlet.data.ClientInfo info = new org.restlet.data.ClientInfo();
-            info.setAgent(SysProperty.getValue("uk.ngs.ca.request.useragent"));
-            request.setClientInfo(info);
-
-            Response response = c.handle(request);
-            if (response.getStatus().equals(Status.SUCCESS_OK)) {
-                _document = new DomRepresentation(response.getEntity()).getDocument(); //response.getEntityAsDom().getDocument();
+            CaHttpResponse response = CaHttpClient.getDefault().send(request);
+            if (response.getStatusCode() == 200) {
+                _document = response.getBodyAsXml();
                 this.document = _document;
                 isExist = true;
             } else {
@@ -104,32 +101,24 @@ public class ResourcesPublicKey {
             }
 
         } catch (Exception ep) {
-            ep.printStackTrace();
-        } finally {
-            return !isExist;
+            logger.warn("Public key lookup failed: " + ep.getMessage());
         }
+        return !isExist;
     }
 
     public Document getDocument() {
         return this.document;
     }
 
-    private Representation getRepresentation(String base64EncodedPublicKey) {
-        DomRepresentation representation;
-        try {
-            representation = new DomRepresentation(MediaType.APPLICATION_XML);
-            Document d = representation.getDocument();
+    private Document getRepresentation(String base64EncodedPublicKey) {
+        Document d = SafeXml.newDocument();
 
-            Element rootElement = d.createElement("PublicKey");
-            d.appendChild(rootElement);
-            rootElement.appendChild(d.createTextNode(base64EncodedPublicKey));
+        Element rootElement = d.createElement("PublicKey");
+        d.appendChild(rootElement);
+        rootElement.appendChild(d.createTextNode(base64EncodedPublicKey));
 
-            d.normalizeDocument();
-        } catch (Exception ep) {
-            ep.printStackTrace();
-            return null;
-        }
-        return representation;
+        d.normalizeDocument();
+        return d;
     }
 
 }

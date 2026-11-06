@@ -35,6 +35,7 @@ import uk.ngs.ca.certificate.chain.CertChainBuilder;
 import uk.ngs.ca.certificate.chain.KeyStoreChains;
 import uk.ngs.ca.certificate.management.ClientKeyStoreCaServiceWrapper;
 import uk.ngs.ca.certificate.management.KeyStoreEntryWrapper;
+import uk.ngs.ca.common.OffEdt;
 import uk.ngs.ca.common.SystemStatus;
 import uk.ngs.certwizard.gui.FilePicker;
 
@@ -261,7 +262,8 @@ public class CertificateImportGuiHelper {
 
             if (SystemStatus.getInstance().getIsOnline()) {
                 KeyStoreEntryWrapper kew = caKeyStoreModel.getKeyStoreEntryMap().get(newHeadCertImportAlias);
-                if (caKeyStoreModel.onlineUpdateKeyStoreEntry(kew)) {
+                if (OffEdt.call(this.parentCompoent, "Updating the certificate status from the CA server...",
+                        () -> caKeyStoreModel.onlineUpdateKeyStoreEntry(kew))) {
                     // we don't need to reStore (no online state is saved to keystore file)
                     //caKeyStoreModel.getClientKeyStore().reStore(); 
                 }

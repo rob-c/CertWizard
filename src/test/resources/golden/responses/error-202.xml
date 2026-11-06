@@ -1,0 +1,1 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?><error><request><method>POST</method><location>/CSR</location><time>2026-11-06 15:00:00</time></request><status><major><code>3</code><text>Certificate error</text></major><minor><code>3.2</code><text>PIN does not match the pending request</text></minor></status></error>

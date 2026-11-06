@@ -18,17 +18,12 @@
  */
 package uk.ngs.ca.certificate.client;
 
-import org.restlet.Client;
-import org.restlet.Request;
-import org.restlet.Response;
-import org.restlet.data.Header;
-import org.restlet.data.Method;
-import org.restlet.data.Reference;
-import org.restlet.ext.xml.DomRepresentation;
-import org.restlet.util.Series;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.w3c.dom.Document;
-import uk.ngs.ca.common.ClientHostName;
-import uk.ngs.ca.common.RestletClient;
+import uk.ngs.ca.common.CaHttpClient;
+import uk.ngs.ca.common.CaHttpRequest;
+import uk.ngs.ca.common.CaHttpResponse;
 import uk.ngs.ca.tools.property.SysProperty;
 
 import javax.xml.xpath.XPath;
@@ -45,32 +40,26 @@ import java.security.cert.X509Certificate;
  */
 public class CertificateDownload {
 
+    private static final Logger logger = LogManager.getLogger(CertificateDownload.class);
+
     Document document = null;
 
     public CertificateDownload(String certID) {
         try {
             String certURL = SysProperty.getValue("uk.ngs.ca.request.certificate.url");
             certURL = certURL + "/" + certID;
-            Client c = RestletClient.getClient();
-
-            Request request = new Request(Method.GET, new Reference(certURL));
-
-            Series<Header> headers = request.getHeaders();
-            headers.add("LocalHost", ClientHostName.getHostName());
-            org.restlet.data.ClientInfo info = new org.restlet.data.ClientInfo();
-            info.setAgent(SysProperty.getValue("uk.ngs.ca.request.useragent"));
-            request.setClientInfo(info);
-
-            Response response = c.handle(request);
-
-            document = new DomRepresentation(response.getEntity()).getDocument(); //response.getEntityAsDom().getDocument();
+            CaHttpResponse response = CaHttpClient.getDefault().send(CaHttpRequest.get(certURL).build());
+            document = response.getBodyAsXml();
         } catch (Exception ep) {
-            ep.printStackTrace();
+            logger.warn("Certificate download failed: " + ep.getMessage());
         }
     }
 
     public X509Certificate getCertificate() {
         X509Certificate certificate = null;
+        if (document == null) {
+            return null; // the download failed (already logged)
+        }
         try {
             XPath xpath = XPathFactory.newInstance().newXPath();
             XPathExpression expr = xpath.compile("/certificate/X509Certificate");
@@ -83,10 +72,9 @@ public class CertificateDownload {
             certificate = (X509Certificate) cf.generateCertificate(inputStream);
             inputStream.close();
         } catch (Exception ep) {
-            ep.printStackTrace();
-        } finally {
-            return certificate;
+            logger.warn("Could not read the downloaded certificate: " + ep.getMessage());
         }
+        return certificate;
     }
 
 }

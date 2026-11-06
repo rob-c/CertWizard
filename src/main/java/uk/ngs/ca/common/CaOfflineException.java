@@ -18,21 +18,13 @@
  */
 package uk.ngs.ca.common;
 
-import org.restlet.Client;
-import org.restlet.Context;
-import org.restlet.data.Protocol;
-import uk.ngs.ca.tools.property.SysProperty;
-
 /**
- * Generate a new Restlet Client with some configuration already applied
- *
- * @author fou43474
+ * Thrown immediately, without touching the network, when the CA server is
+ * already known to be unreachable. Nothing was sent.
  */
-public class RestletClient {
+public class CaOfflineException extends CaHttpException {
 
-    public static Client getClient() {
-        Context context = new Context();
-        context.getParameters().add("socketConnectTimeoutMs", String.valueOf(SysProperty.getTimeoutMilliSecs()));
-        return new Client(new Context(), Protocol.HTTPS);
+    public CaOfflineException(String message) {
+        super(message, null, false, 0);
     }
 }

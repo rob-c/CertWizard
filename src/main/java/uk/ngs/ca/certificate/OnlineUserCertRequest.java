@@ -18,20 +18,18 @@
  */
 package uk.ngs.ca.certificate;
 
-import org.restlet.Client;
-import org.restlet.Request;
-import org.restlet.Response;
-import org.restlet.data.*;
-import org.restlet.ext.xml.DomRepresentation;
-import org.restlet.representation.Representation;
-import org.restlet.util.Series;
 import org.w3c.dom.Document;
 import org.w3c.dom.Element;
 import org.w3c.dom.Node;
 import org.w3c.dom.NodeList;
-import uk.ngs.ca.common.ClientHostName;
-import uk.ngs.ca.common.RestletClient;
+import uk.ngs.ca.common.CaHttpClient;
+import uk.ngs.ca.common.CaHttpException;
+import uk.ngs.ca.common.CaHttpRequest;
+import uk.ngs.ca.common.CaHttpResponse;
+import uk.ngs.ca.common.SafeXml;
 import uk.ngs.ca.tools.property.SysProperty;
+
+import java.io.IOException;
 
 /**
  * @author xw75 (Xiao Wang)
@@ -39,27 +37,27 @@ import uk.ngs.ca.tools.property.SysProperty;
 public class OnlineUserCertRequest {
 
     private final String CSRURL = SysProperty.getValue("uk.ngs.ca.request.csr.url");
-    private final String USERAGENT = SysProperty.getValue("uk.ngs.ca.request.useragent");
     private String MESSAGE = "";
     private boolean isCSRRequestSuccess = false;
 
     public OnlineUserCertRequest(String csrString, String pin, String email) {
-        Client c = RestletClient.getClient();
-        Request request = new Request(Method.POST, new Reference(CSRURL), getRepresentation(csrString, pin, email));
-        Series<Header> headers = request.getHeaders();
-        headers.set("LocalHost", ClientHostName.getHostName());
+        CaHttpRequest request = CaHttpRequest.post(CSRURL)
+                .xmlBody(getRepresentation(csrString, pin, email))
+                .build();
 
-        //by calling clientinfo to change standard header
-        ClientInfo info = new ClientInfo();
-        info.setAgent(USERAGENT);
-        request.setClientInfo(info);
+        CaHttpResponse response;
+        try {
+            response = CaHttpClient.getDefault().send(request);
+        } catch (IOException ex) {
+            MESSAGE = CaHttpException.submissionFailureMessage("certificate request", ex);
+            isCSRRequestSuccess = false;
+            return;
+        }
 
-        Response response = c.handle(request);
-
-        if (response.getStatus().equals(Status.SUCCESS_CREATED)) {
+        if (response.getStatusCode() == 201) {
             MESSAGE = "Your CSR has been submitted to the CA server successfully. \nIt is waiting for the approval and signing by an RA and CA operator.";
             isCSRRequestSuccess = true;
-        } else if (response.getStatus().equals(Status.SUCCESS_ACCEPTED)) {
+        } else if (response.getStatusCode() == 202) {
             try {
                 MESSAGE = _getFormattedMessage(response);
                 isCSRRequestSuccess = false;
@@ -75,11 +73,11 @@ public class OnlineUserCertRequest {
         }
     }
 
-    private String _getFormattedMessage(Response response) {
+    private String _getFormattedMessage(CaHttpResponse response) {
         String message = "";
 
         try {
-            Document document = new DomRepresentation(response.getEntity()).getDocument(); //response.getEntityAsDom().getDocument();
+            Document document = response.getBodyAsXml();
             document.getDocumentElement().normalize();
             NodeList nodeLst = document.getElementsByTagName("minor");
 
@@ -115,37 +113,30 @@ public class OnlineUserCertRequest {
         return isCSRRequestSuccess;
     }
 
-    private Representation getRepresentation(String csrString, String pin, String email) {
-        DomRepresentation representation;
-        try {
-            representation = new DomRepresentation(MediaType.APPLICATION_XML);
-            Document d = representation.getDocument();
+    private Document getRepresentation(String csrString, String pin, String email) {
+        Document d = SafeXml.newDocument();
 
-            Element rootElement = d.createElement("CSR");
-            d.appendChild(rootElement);
+        Element rootElement = d.createElement("CSR");
+        d.appendChild(rootElement);
 
-            Element eltName = d.createElement("Request");
-            eltName.appendChild(d.createTextNode(csrString));
-            rootElement.appendChild(eltName);
+        Element eltName = d.createElement("Request");
+        eltName.appendChild(d.createTextNode(csrString));
+        rootElement.appendChild(eltName);
 
-            eltName = d.createElement("PIN");
-            eltName.appendChild(d.createTextNode(pin));
-            rootElement.appendChild(eltName);
+        eltName = d.createElement("PIN");
+        eltName.appendChild(d.createTextNode(pin));
+        rootElement.appendChild(eltName);
 
-            eltName = d.createElement("Email");
-            eltName.appendChild(d.createTextNode(email));
-            rootElement.appendChild(eltName);
+        eltName = d.createElement("Email");
+        eltName.appendChild(d.createTextNode(email));
+        rootElement.appendChild(eltName);
 
-            String _version = SysProperty.getValue("ngsca.certwizard.version");
-            eltName = d.createElement("Version");
-            eltName.appendChild(d.createTextNode(_version));
-            rootElement.appendChild(eltName);
+        String _version = SysProperty.getValue("ngsca.certwizard.version");
+        eltName = d.createElement("Version");
+        eltName.appendChild(d.createTextNode(_version));
+        rootElement.appendChild(eltName);
 
-            d.normalizeDocument();
-        } catch (Exception ep) {
-            ep.printStackTrace();
-            return null;
-        }
-        return representation;
+        d.normalizeDocument();
+        return d;
     }
 }

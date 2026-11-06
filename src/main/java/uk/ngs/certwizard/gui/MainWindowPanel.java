@@ -38,7 +38,9 @@ import uk.ngs.ca.certificate.renew.RenewalLedger;
 import uk.ngs.ca.certificate.renew.RenewalSubmitter;
 import uk.ngs.ca.certificate.verify.ExportVerifier;
 import uk.ngs.ca.common.CertUtil;
+import uk.ngs.ca.common.ConnectivityMonitor;
 import uk.ngs.ca.common.GuiExecutor;
+import uk.ngs.ca.common.OffEdt;
 import uk.ngs.ca.common.SystemStatus;
 import uk.ngs.ca.task.OnlineUpdateKeyStoreEntriesSwingWorker;
 import uk.ngs.ca.tools.property.SysProperty;
@@ -797,7 +799,8 @@ public class MainWindowPanel extends javax.swing.JPanel implements Observer {
                 this.reloadComboFromModel();
                 this.setComboSelectedItemByAlias(newCsrRenewalAlias);
                 KeyStoreEntryWrapper kew = (KeyStoreEntryWrapper) this.jComboBox1.getSelectedItem();
-                if (caKeyStoreModel.onlineUpdateKeyStoreEntry(kew)) {
+                if (OffEdt.call(this, "Updating the certificate status from the CA server...",
+                        () -> caKeyStoreModel.onlineUpdateKeyStoreEntry(kew))) {
                     // we don't need to reStore (no online state is saved to keystore file)
                 }
             }
@@ -956,7 +959,8 @@ public class MainWindowPanel extends javax.swing.JPanel implements Observer {
                     this.setComboSelectedItemByAlias(apply.getStoredAlias());
 
                     KeyStoreEntryWrapper kew = (KeyStoreEntryWrapper) this.jComboBox1.getSelectedItem();
-                    if (caKeyStoreModel.onlineUpdateKeyStoreEntry(kew)) {
+                    if (OffEdt.call(this, "Updating the certificate status from the CA server...",
+                            () -> caKeyStoreModel.onlineUpdateKeyStoreEntry(kew))) {
                         // we don't need to reStore (no online state is saved to keystore file)
                         //caKeyStoreModel.getClientKeyStore().reStore(); 
                     }
@@ -1387,15 +1391,20 @@ public class MainWindowPanel extends javax.swing.JPanel implements Observer {
     }
 
     /**
-     * Invoke PingService to test for connection
+     * Re-check the connection to the CA server now (off the EDT, behind a
+     * wait dialog) before a user-initiated online action, and explain the
+     * problem if it cannot be reached.
      */
     private boolean isOnlinePing() {
-        boolean online = PingService.getPingService().isPingService();
+        boolean online = OffEdt.call(this, "Checking the connection to the CA server...",
+                () -> PingService.getPingService().isPingService());
         if (!online) {
+            String detail = ConnectivityMonitor.getInstance().getStatus().getLastError();
             JOptionPane.showMessageDialog(this, "Cannot connect to the CA Server. Please ensure that you are connected to the Internet.\n"
                     + "If you are connected to the Internet but still unable to connect to the CA Server, please check your firewall\n"
                     + "settings and ensure you allow Java to access to the Internet. If problem still persists, please contact\n"
-                    + "the helpdesk at support@grid-support.ac.uk.", "Server Connection Fault", JOptionPane.ERROR_MESSAGE);
+                    + "the helpdesk at support@grid-support.ac.uk."
+                    + (detail == null ? "" : "\n\nDetails: " + detail), "Server Connection Fault", JOptionPane.ERROR_MESSAGE);
             setRedMOD(stringMotDOffline);
         }
         return online;

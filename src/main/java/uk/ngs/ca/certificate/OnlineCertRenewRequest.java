@@ -18,13 +18,6 @@
  */
 package uk.ngs.ca.certificate;
 
-import org.restlet.Client;
-import org.restlet.Request;
-import org.restlet.Response;
-import org.restlet.data.*;
-import org.restlet.ext.xml.DomRepresentation;
-import org.restlet.representation.Representation;
-import org.restlet.util.Series;
 import org.w3c.dom.Document;
 import org.w3c.dom.Element;
 import uk.ngs.ca.common.*;
@@ -125,8 +118,17 @@ public class OnlineCertRenewRequest {
      * server (if any).
      */
     public Pair<Boolean, String> doRenewal() {
-        Response response = this.doInitialRequest();
-        return this.respondToPPPKChallenge(response);
+        CaHttpResponse response;
+        try {
+            response = this.doInitialRequest();
+        } catch (IOException ex) {
+            return Pair.create(false, CaHttpException.challengeFailureMessage("renewal request", ex));
+        }
+        try {
+            return this.respondToPPPKChallenge(response);
+        } catch (IOException ex) {
+            return Pair.create(false, CaHttpException.submissionFailureMessage("renewal request", ex));
+        }
     }
 
     /**
@@ -134,25 +136,15 @@ public class OnlineCertRenewRequest {
      *
      * @return The response
      */
-    private Response doInitialRequest() {
-        Client client = RestletClient.getClient();
-
+    private CaHttpResponse doInitialRequest() throws IOException {
         // First attempt to connect. Add the 'PPPK' header and provide the encoded 
         // public keyid in the request message payload/body. 
         // We subsequently expect a 401 response challenge. 
-        Representation representation = getDomRepresentation();
-
-        Request request = new Request(Method.POST, new Reference(CSRURL), representation);
-
-        Series<Header> headers = request.getHeaders();
-        headers.set("PPPK", "this is pppk");
-        headers.set("LocalHost", ClientHostName.getHostName());
-
-        //by calling clientinfo to change standard header
-        org.restlet.data.ClientInfo info = new org.restlet.data.ClientInfo();
-        info.setAgent(USERAGENT);
-        request.setClientInfo(info);
-        return client.handle(request);
+        CaHttpRequest request = CaHttpRequest.post(CSRURL)
+                .xmlBody(getDomRepresentation())
+                .header("PPPK", "this is pppk")
+                .build();
+        return CaHttpClient.getDefault().send(request);
     }
 
     /**
@@ -163,26 +155,27 @@ public class OnlineCertRenewRequest {
      * request was processed by the server (true for success otherwise false).
      * <tt>Pair.second</tt> provides a message returned by the server (if any).
      */
-    private Pair<Boolean, String> respondToPPPKChallenge(Response response) {
-        Status status = response.getStatus();
+    private Pair<Boolean, String> respondToPPPKChallenge(CaHttpResponse response) throws IOException {
         // We expect CLIENT_ERROR_UNAUTHORIZED as the response from the intial request. 
-        if (!status.equals(Status.CLIENT_ERROR_UNAUTHORIZED)) {
+        if (response.getStatusCode() != 401) {
             return Pair.create(false, "UNAUTHORIZED");
         }
 
-        Series<Header> headers = response.getHeaders();
-        Header _realmP = headers.getFirst("realm");
-        Header _nonceP = headers.getFirst("nonce");
-        Header _keyidP = headers.getFirst("keyid");
-        Header _opaqueP = headers.getFirst("opaque");
+        String _realmP = response.getHeader("realm");
+        String _nonceP = response.getHeader("nonce");
+        String _keyidP = response.getHeader("keyid");
+        String _opaqueP = response.getHeader("opaque");
         //we will do the response action from here.
         if (_opaqueP == null) {
-            String _keyid = _keyidP.getValue();
+            if (_nonceP == null || _keyidP == null) {
+                throw new IllegalStateException("Expected nonce and keyid headers from server");
+            }
+            String _keyid = _keyidP;
             int index = _keyid.indexOf(".");
             String m = _keyid.substring(0, index).toUpperCase(Locale.ENGLISH);
             BigInteger q = getPrivateExponent(this.authPrivateKey);
 
-            String _nonce = _nonceP.getValue() + ":" + new Date().getTime();
+            String _nonce = _nonceP + ":" + new Date().getTime();
             _nonce = _nonce.toLowerCase(Locale.ENGLISH);
             String c = asciiToHex(_nonce);
             c = c.toUpperCase(Locale.ENGLISH);
@@ -191,62 +184,38 @@ public class OnlineCertRenewRequest {
             BigInteger b_response = b_c.modPow(q, b_m);
             String _response = b_response.toString(16);
 
-            Client client = RestletClient.getClient();
-
-            //please note you have to call getRepresentation() again, otherwise 
-            // it will be null. Why? - maybe restlet nullifies it after the first post?
-            Representation representation = getDomRepresentation();
-            Request request = new Request(Method.POST, new Reference(CSRURL), representation);
-            Series<Header> newHeaders = request.getHeaders();
-            newHeaders.set("PPPK", "this is pppk");
-            newHeaders.set("LocalHost", ClientHostName.getHostName());
-            newHeaders.set("keyid", _keyid);
-            newHeaders.set("realm", _realmP.getValue());
-            newHeaders.set("response", _response);
-
-            ClientInfo info = new ClientInfo();
-            info.setAgent(USERAGENT);
-            request.setClientInfo(info);
-            response = client.handle(request);
+            // The body is rebuilt for the second request; note it carries a
+            // new random PIN hash, exactly as the original client did.
+            CaHttpRequest request = CaHttpRequest.post(CSRURL)
+                    .xmlBody(getDomRepresentation())
+                    .header("PPPK", "this is pppk")
+                    .header("keyid", _keyid)
+                    .header("realm", _realmP)
+                    .header("response", _response)
+                    .build();
+            response = CaHttpClient.getDefault().send(request);
 
         } else {
             //we will do cookie thing from here
-
-            Client client = RestletClient.getClient();
-            //please note you have to call getRepresentation() again, otherwise 
-            // it will be null. Why? - maybe restlet nullifies it after the first post?
-            Representation representation = getDomRepresentation();
-            Request request = new Request(Method.POST, new Reference(CSRURL), representation);
-            Series<Header> newHeaders = request.getHeaders();
-            newHeaders.set("PPPK", "this is pppk");
-            newHeaders.set("LocalHost", ClientHostName.getHostName());
-            newHeaders.set("opaque", _opaqueP.getValue());
-
-            ClientInfo info = new ClientInfo();
-            info.setAgent(USERAGENT);
-            request.setClientInfo(info);
-            response = client.handle(request);
-            //org.restlet.util.Series<org.restlet.data.Parameter> _headers = (org.restlet.util.Series) response.getAttributes().get("org.restlet.http.headers");
+            CaHttpRequest request = CaHttpRequest.post(CSRURL)
+                    .xmlBody(getDomRepresentation())
+                    .header("PPPK", "this is pppk")
+                    .header("opaque", _opaqueP)
+                    .build();
+            response = CaHttpClient.getDefault().send(request);
         }
 
-        if (response.getStatus().equals(Status.SUCCESS_CREATED)) {
+        if (response.getStatusCode() == 201) {
             return Pair.create(true, "SUCCESS_CREATED");   // 201 
 
         } else {
             String detailError = OnlineCertUtil.getServerErrorMessage(response);
-            return Pair.create(false, detailError + " [" + response.getStatus() + "]");
+            return Pair.create(false, detailError + " [" + response.getStatusDescription() + "]");
         }
     }
 
-    private Representation getDomRepresentation() {
-        DomRepresentation representation;
-        Document d;
-        try {
-            representation = new DomRepresentation(MediaType.APPLICATION_XML);
-            d = representation.getDocument();
-        } catch (IOException ex) {
-            throw new IllegalStateException("Coding error - can't create empty dom doc", ex);
-        }
+    private Document getDomRepresentation() {
+        Document d = SafeXml.newDocument();
         Element rootElement = d.createElement("CSR");
         d.appendChild(rootElement);
 
@@ -281,6 +250,6 @@ public class OnlineCertRenewRequest {
 
         d.normalizeDocument();
 
-        return representation;
+        return d;
     }
 }

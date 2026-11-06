@@ -18,9 +18,9 @@
  */
 package uk.ngs.ca.common;
 
-import org.apache.commons.codec.binary.Base64;
-
+import java.nio.charset.StandardCharsets;
 import java.security.PublicKey;
+import java.util.Base64;
 
 /**
  * @author xw75
@@ -28,7 +28,9 @@ import java.security.PublicKey;
 public class EncryptUtil {
 
     public static String getEncodedPublicKey(PublicKey publicKey) {
-        return new String(Base64.encodeBase64(publicKey.getEncoded()));
+        // Standard alphabet, padded, no line breaks - identical to the
+        // commons-codec Base64.encodeBase64() output used previously.
+        return new String(Base64.getEncoder().encode(publicKey.getEncoded()), StandardCharsets.US_ASCII);
     }
 
 }

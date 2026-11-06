@@ -1,0 +1,2 @@
+# Golden HTTP request/response fixtures must keep their exact bytes (no EOL conversion).
+src/test/resources/golden/** -text

@@ -18,18 +18,15 @@
  */
 package uk.ngs.ca.certificate.client;
 
-import org.restlet.Client;
-import org.restlet.Request;
-import org.restlet.Response;
-import org.restlet.data.Header;
-import org.restlet.data.Method;
-import org.restlet.data.Reference;
-import org.restlet.data.Status;
-import org.restlet.util.Series;
-import uk.ngs.ca.common.ClientHostName;
-import uk.ngs.ca.common.RestletClient;
-import uk.ngs.ca.common.SystemStatus;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
+import uk.ngs.ca.common.CaHttpClient;
+import uk.ngs.ca.common.CaHttpRequest;
+import uk.ngs.ca.common.CaHttpResponse;
+import uk.ngs.ca.common.ConnectivityMonitor;
 import uk.ngs.ca.tools.property.SysProperty;
+
+import java.io.IOException;
 
 /**
  * Ping the server.
@@ -37,6 +34,8 @@ import uk.ngs.ca.tools.property.SysProperty;
  * @author xw75
  */
 public final class PingService {
+
+    private static final Logger logger = LogManager.getLogger(PingService.class);
 
     private PingService() {  // force non-instantiation with private constructor.
     }
@@ -61,44 +60,33 @@ public final class PingService {
     }
 
     /**
-     * Ping the CA server with a ping request.
+     * Ping the CA server now and update the application's online status
+     * (via {@link ConnectivityMonitor#checkNow()}, which also re-schedules
+     * the automatic checks and shares one ping between concurrent callers).
+     * Blocks for up to the connect timeout: never call on the Swing EDT.
      *
      * @return true if successful ping otherwise false.
      */
     public boolean isPingService() {
-        boolean isPing = false;
-        Response response = null;
-        try {
-            String pingURL = SysProperty.getValue("uk.ngs.ca.request.pingservice.url");
+        return ConnectivityMonitor.getInstance().checkNow();
+    }
 
-            Client client = RestletClient.getClient();
-            Request request = new Request(Method.GET, new Reference(pingURL));
-
-            Series<Header> headers = request.getHeaders();
-            headers.set("LocalHost", ClientHostName.getHostName());
-            org.restlet.data.ClientInfo info = new org.restlet.data.ClientInfo();
-            info.setAgent(SysProperty.getValue("uk.ngs.ca.request.useragent"));
-            request.setClientInfo(info);
-            System.out.println("pinging URL [" + pingURL + "]");
-
-            response = client.handle(request);
-            if (response.getStatus().equals(Status.SUCCESS_OK)) {
-                isPing = true;
-            }
-
-            // change the systems online status and update any observers. 
-            SystemStatus.getInstance().setIsOnline(isPing);
-
-        } catch (Exception ep) {
-            ep.printStackTrace();
-        } finally {
-            // ensure that the response is fully read. 
-            try {
-                response.getEntity().getStream().close();
-            } catch (Exception ex) {
-            }
-            return isPing;
-        }
-
+    /**
+     * Send one ping request (no retries; the connectivity monitor provides
+     * the backoff) and report whether the server answered 200 OK. Does not
+     * update any state and is never short-circuited by the offline state.
+     *
+     * @return true if the server answered 200, false for any other status
+     * @throws IOException if no response was received
+     */
+    public boolean ping() throws IOException {
+        String pingURL = SysProperty.getValue("uk.ngs.ca.request.pingservice.url");
+        logger.debug("pinging URL [" + pingURL + "]");
+        CaHttpRequest request = CaHttpRequest.get(pingURL)
+                .maxAttempts(1)
+                .connectivityProbe()
+                .build();
+        CaHttpResponse response = CaHttpClient.getDefault().send(request);
+        return response.getStatusCode() == 200;
     }
 }
