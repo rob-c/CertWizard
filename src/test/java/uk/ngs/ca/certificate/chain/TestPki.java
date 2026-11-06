@@ -65,6 +65,10 @@ public final class TestPki {
         Instant notBefore = Instant.now().minus(Duration.ofDays(1));
         Instant notAfter = Instant.now().plus(Duration.ofDays(365));
         String aiaCaIssuersUrl;
+        String crlDpUrl;
+        boolean validitySet;
+        String sigAlg;
+        org.bouncycastle.asn1.x509.KeyPurposeId[] eku;
 
         public Spec issuedBy(Entity e) {
             this.issuer = e;
@@ -94,6 +98,7 @@ public final class TestPki {
         public Spec validity(Instant from, Instant to) {
             this.notBefore = from;
             this.notAfter = to;
+            this.validitySet = true;
             return this;
         }
 
@@ -102,9 +107,28 @@ public final class TestPki {
             return this;
         }
 
+        public Spec crlDp(String url) {
+            this.crlDpUrl = url;
+            return this;
+        }
+
+        public Spec sigAlg(String alg) {
+            this.sigAlg = alg;
+            return this;
+        }
+
+        public Spec eku(org.bouncycastle.asn1.x509.KeyPurposeId... purposes) {
+            this.eku = purposes;
+            return this;
+        }
+
         public Entity build() {
             try {
                 KeyPair kp = keys != null ? keys : rsa();
+                if (ca && !validitySet) {
+                    // CAs outlive the certificates they issue, as in real life.
+                    notAfter = Instant.now().plus(Duration.ofDays(3650));
+                }
                 KeyPair signer = issuer == null ? kp : issuer.keys;
                 X500Name issuerName = issuer == null ? new X500Name(subject)
                         : X500Name.getInstance(issuer.cert.getSubjectX500Principal().getEncoded());
@@ -130,7 +154,17 @@ public final class TestPki {
                             new AccessDescription(AccessDescription.id_ad_caIssuers,
                                     new GeneralName(GeneralName.uniformResourceIdentifier, aiaCaIssuersUrl))));
                 }
-                String alg = signer.getPrivate().getAlgorithm().startsWith("EC") ? "SHA384withECDSA" : "SHA256withRSA";
+                if (crlDpUrl != null) {
+                    GeneralName gn = new GeneralName(GeneralName.uniformResourceIdentifier, crlDpUrl);
+                    b.addExtension(Extension.cRLDistributionPoints, false, new org.bouncycastle.asn1.x509.CRLDistPoint(
+                            new org.bouncycastle.asn1.x509.DistributionPoint[]{new org.bouncycastle.asn1.x509.DistributionPoint(
+                                    new org.bouncycastle.asn1.x509.DistributionPointName(new org.bouncycastle.asn1.x509.GeneralNames(gn)), null, null)}));
+                }
+                if (eku != null) {
+                    b.addExtension(Extension.extendedKeyUsage, false, new org.bouncycastle.asn1.x509.ExtendedKeyUsage(eku));
+                }
+                String alg = sigAlg != null ? sigAlg
+                        : signer.getPrivate().getAlgorithm().startsWith("EC") ? "SHA384withECDSA" : "SHA256withRSA";
                 X509Certificate cert = new JcaX509CertificateConverter().setProvider("BC")
                         .getCertificate(b.build(new JcaContentSignerBuilder(alg).setProvider("BC").build(signer.getPrivate())));
                 return new Entity(cert, kp);
@@ -162,9 +196,13 @@ public final class TestPki {
     }
 
     public static KeyPair rsa() {
+        return rsa(2048);
+    }
+
+    public static KeyPair rsa(int bits) {
         try {
             KeyPairGenerator g = KeyPairGenerator.getInstance("RSA");
-            g.initialize(2048);
+            g.initialize(bits);
             return g.generateKeyPair();
         } catch (Exception e) {
             throw new IllegalStateException(e);
