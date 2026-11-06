@@ -26,7 +26,6 @@ import net.sf.portecle.crypto.CryptoException;
 import net.sf.portecle.crypto.KeyStoreType;
 import net.sf.portecle.crypto.KeyStoreUtil;
 import net.sf.portecle.crypto.X509CertUtil;
-import net.sf.portecle.gui.LastDir;
 import net.sf.portecle.gui.SwingHelper;
 import net.sf.portecle.gui.error.DThrowable;
 import net.sf.portecle.gui.password.DGetPassword;
@@ -35,6 +34,7 @@ import org.bouncycastle.openssl.PasswordFinder;
 import uk.ngs.ca.certificate.management.ClientKeyStoreCaServiceWrapper;
 import uk.ngs.ca.certificate.management.KeyStoreEntryWrapper;
 import uk.ngs.ca.common.SystemStatus;
+import uk.ngs.certwizard.gui.FilePicker;
 
 import javax.swing.*;
 import java.awt.*;
@@ -60,10 +60,6 @@ import java.util.ResourceBundle;
  */
 public class CertificateImportGuiHelper {
 
-    /**
-     * The last directory accessed by the application
-     */
-    private final LastDir m_lastDir = new LastDir();
     /**
      * Portecle Resource bundle base name
      */
@@ -273,18 +269,8 @@ public class CertificateImportGuiHelper {
      * @see FPortecle#chooseImportFile()
      */
     private File chooseImportFileHelper() {
-        JFileChooser chooser = FileChooserFactory.getKeyPairFileChooser(null);
-        File fLastDir = m_lastDir.getLastDir();
-        if (fLastDir != null) {
-            chooser.setCurrentDirectory(fLastDir);
-        }
-        chooser.setDialogTitle(RB.getString("FPortecle.ImportKeyPairFile.Title"));
-        chooser.setMultiSelectionEnabled(false);
-        int iRtnValue = chooser.showDialog(parentCompoent, RB.getString("FPortecle.ImportKeyPairFile.button"));
-        if (iRtnValue == JFileChooser.APPROVE_OPTION) {
-            return chooser.getSelectedFile();
-        }
-        return null;
+        return FilePicker.openFile(parentCompoent, RB.getString("FPortecle.ImportKeyPairFile.Title"),
+                RB.getString("FPortecle.ImportKeyPairFile.button"), FileChooserFactory.getKeyPairFilter());
     }
 
     /**
