@@ -230,6 +230,16 @@
                     <family>mac</family>
                 </os>
             </activation>
+            <properties>
+                <!--
+                    codesign identity for CertWizard.app. "-" signs ad hoc; for a
+                    distributable build pass a Developer ID, e.g.
+                    -Dmac.sign.identity="Developer ID Application: Example Ltd (TEAMID)"
+                -->
+                <mac.sign.identity>-</mac.sign.identity>
+                <mac.packaging.dir>${project.basedir}/src/main/packaging/macos</mac.packaging.dir>
+                <mac.app>${project.build.directory}/CertWizard.app</mac.app>
+            </properties>
             <build>
                 <plugins>
                     <plugin>
@@ -337,6 +347,49 @@ if os.path.exists(p):
         plistlib.dump(d, f)
                                         </argument>
                                         <argument>${project.build.directory}/CertWizard.app/Contents/runtime/Contents/Info.plist</argument>
+                                    </arguments>
+                                </configuration>
+                            </execution>
+                            <execution>
+                                <!--
+                                    jpackage ad hoc signs the image itself, but without the hardened
+                                    runtime, and the Info.plist edit above invalidates that signature
+                                    anyway. Re-sign everything inside-out with the hardened runtime and
+                                    the JVM entitlements (stfc/CertWizard#67). Executions of one plugin
+                                    in one phase run in declaration order, so this runs after the last
+                                    change to the bundle and before it is verified and zipped.
+                                -->
+                                <id>sign-mac-app</id>
+                                <phase>package</phase>
+                                <goals>
+                                    <goal>exec</goal>
+                                </goals>
+                                <configuration>
+                                    <executable>bash</executable>
+                                    <arguments>
+                                        <argument>${mac.packaging.dir}/sign-app.sh</argument>
+                                        <argument>${mac.app}</argument>
+                                        <argument>${mac.sign.identity}</argument>
+                                        <argument>${mac.packaging.dir}/CertWizard.entitlements</argument>
+                                    </arguments>
+                                </configuration>
+                            </execution>
+                            <execution>
+                                <!--
+                                    Fail the build unless codesign verifies the whole bundle (deep,
+                                    strict) and the launcher has the hardened runtime plus every
+                                    entitlement the JVM needs. See verify-app.sh.
+                                -->
+                                <id>verify-mac-app-signature</id>
+                                <phase>package</phase>
+                                <goals>
+                                    <goal>exec</goal>
+                                </goals>
+                                <configuration>
+                                    <executable>bash</executable>
+                                    <arguments>
+                                        <argument>${mac.packaging.dir}/verify-app.sh</argument>
+                                        <argument>${mac.app}</argument>
                                     </arguments>
                                 </configuration>
                             </execution>

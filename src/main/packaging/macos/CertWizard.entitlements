@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+    Entitlements for the CertWizard launcher (and the bundled JDK's jspawnhelper).
+
+    The .app is signed with the hardened runtime (codesign "options runtime"),
+    which a Developer ID build needs for notarization. A HotSpot JVM cannot start under
+    the hardened runtime without these: with allow-jit missing the launcher dies
+    with SIGTRAP in pthread_jit_write_protect_np inside JNI_CreateJavaVM before any
+    Java code runs (stfc/CertWizard#67).
+
+    - allow-jit / allow-unsigned-executable-memory: HotSpot generates and patches
+      machine code at runtime (interpreter templates, JIT, stubs).
+    - disable-library-validation: the runtime's dylibs are not signed with Apple's
+      or our own Team ID when built ad hoc, and JNI loads them with dlopen.
+    - allow-dyld-environment-variables: lets DYLD_* variables through for
+      diagnostics; the JDK's own jpackage default entitlements include it.
+
+    src/main/packaging/macos/verify-app.sh fails the build if any of these is
+    missing from the signed launcher.
+-->
+<plist version="1.0">
+<dict>
+    <key>com.apple.security.cs.allow-jit</key>
+    <true/>
+    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+    <true/>
+    <key>com.apple.security.cs.disable-library-validation</key>
+    <true/>
+    <key>com.apple.security.cs.allow-dyld-environment-variables</key>
+    <true/>
+</dict>
+</plist>
