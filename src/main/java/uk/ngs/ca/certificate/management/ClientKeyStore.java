@@ -94,6 +94,14 @@ public final class ClientKeyStore {
     }
 
     /**
+     * Forget the shared instance. For tests only: lets each test load its own
+     * keystore from its own temporary data directory.
+     */
+    static synchronized void resetForTesting() {
+        clientKeyStore = null;
+    }
+
+    /**
      * Force non-instantiation with private constructor
      * <p>
      * If $HOME/.ca/cakeystore.pkcs12 already exists, load it otherwise create

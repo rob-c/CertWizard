@@ -22,6 +22,8 @@ import org.w3c.dom.Document;
 import org.w3c.dom.Element;
 import org.w3c.dom.Node;
 import org.w3c.dom.NodeList;
+import uk.ngs.ca.certificate.chain.CertChainBuilder;
+import uk.ngs.ca.certificate.chain.KeyStoreChains;
 import uk.ngs.ca.certificate.client.CertificateDownload;
 import uk.ngs.ca.certificate.client.ResourcesPublicKey;
 import uk.ngs.ca.tools.property.SysProperty;
@@ -30,6 +32,7 @@ import javax.xml.xpath.*;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.security.Key;
 import java.security.KeyStoreException;
 import java.security.PrivateKey;
 import java.security.PublicKey;
@@ -37,6 +40,8 @@ import java.security.cert.Certificate;
 import java.security.cert.CertificateException;
 import java.security.cert.CertificateFactory;
 import java.security.cert.X509Certificate;
+import java.util.Arrays;
+import java.util.Collections;
 import java.util.Date;
 import java.util.Enumeration;
 import java.util.Map;
@@ -100,6 +105,15 @@ public class ClientKeyStoreCaServiceWrapper {
         return instance;
     }
 
+    /**
+     * Forget the shared instances. For tests only: lets each test load its
+     * own keystore from its own temporary data directory.
+     */
+    public static synchronized void resetForTesting() {
+        instance = null;
+        ClientKeyStore.resetForTesting();
+    }
+
     private ClientKeyStoreCaServiceWrapper(char[] passphrase) throws KeyStoreException, IOException, CertificateException {
         this.mKeystorePASSPHRASE = passphrase;
         try {
@@ -114,6 +128,85 @@ public class ClientKeyStoreCaServiceWrapper {
         }
         this.clientKeyStore = ClientKeyStore.getClientkeyStore(this.mKeystorePASSPHRASE);
         this.loadMap();
+    }
+
+    /**
+     * Build the chain to store for a certificate downloaded from the CA: the
+     * certificate itself followed by every issuer up to and including the
+     * root. Issuers come from the chain already stored for the entry, the
+     * bundled UK e-Science CA certificates and, failing those, AIA download.
+     * If the root cannot be reached the partial chain is returned (never less
+     * than the downloaded certificate) and the gap is logged.
+     *
+     * @param downloaded   certificate just downloaded from the CA
+     * @param storedChain  chain currently stored for the entry (may be null)
+     * @return leaf-first chain
+     */
+    private static X509Certificate[] fullChainFor(X509Certificate downloaded, Certificate[] storedChain) {
+        CertChainBuilder.Result result = CertChainBuilder.standard().build(downloaded, storedChain);
+        if (!result.isComplete()) {
+            Logger.getLogger(ClientKeyStoreCaServiceWrapper.class.getName()).log(Level.WARNING,
+                    "Incomplete certificate chain for [{0}]: {1}",
+                    new Object[]{downloaded.getSubjectX500Principal().getName(), result.getProblems()});
+        }
+        return result.toArray();
+    }
+
+    /**
+     * Earlier CertWizard versions stored downloaded certificates without their
+     * issuer chain (leaf only). Fill in the missing intermediate and root
+     * certificates for every key entry whose stored chain is not already
+     * complete and ordered, using only the certificates already in the
+     * keyStore plus the bundled UK e-Science CA certificates (no network).
+     * <p>
+     * Only the in-memory keyStore is changed. As with every other method of
+     * this class, persisting it is left to the caller via
+     * {@link ClientKeyStore#reStore()}. Failures are logged and never thrown.
+     *
+     * @return the number of entries whose chain was completed.
+     */
+    public int completeStoredCertificateChains() {
+        return completeStoredCertificateChains(CertChainBuilder.offline());
+    }
+
+    /**
+     * As {@link #completeStoredCertificateChains()} but with an explicit
+     * builder (tests use one backed by a throwaway CA).
+     *
+     * @param builder chain builder
+     * @return the number of entries whose chain was completed.
+     */
+    int completeStoredCertificateChains(CertChainBuilder builder) {
+        int repaired = 0;
+        try {
+            synchronized (this.clientKeyStore) {
+                for (String alias : Collections.list(this.clientKeyStore.aliases())) {
+                    if (!this.clientKeyStore.isKeyEntry(alias)) {
+                        continue;
+                    }
+                    Certificate[] stored = this.clientKeyStore.getCertificateChain(alias);
+                    CertChainBuilder.Result built = KeyStoreChains.complete(stored, builder);
+                    if (!KeyStoreChains.shouldReplace(stored, built)) {
+                        continue;
+                    }
+                    Key key = this.clientKeyStore.getKey(alias, this.mKeystorePASSPHRASE);
+                    if (!(key instanceof PrivateKey)) {
+                        continue;
+                    }
+                    this.clientKeyStore.setKeyEntry(alias, key, this.mKeystorePASSPHRASE, built.toArray());
+                    repaired++;
+                    Logger.getLogger(ClientKeyStoreCaServiceWrapper.class.getName()).log(Level.INFO,
+                            "Completed certificate chain for [{0}]: {1} -> {2} certificates",
+                            new Object[]{alias, stored.length, built.getChain().size()});
+                }
+            }
+            // No need to rebuild keyStoreEntryMap: the leaf certificate (from
+            // which every KeyStoreEntryWrapper field is derived) is unchanged.
+        } catch (Exception ex) {
+            Logger.getLogger(ClientKeyStoreCaServiceWrapper.class.getName()).log(Level.WARNING,
+                    "Could not complete stored certificate chains", ex);
+        }
+        return repaired;
     }
 
     /**
@@ -560,7 +653,9 @@ public class ClientKeyStoreCaServiceWrapper {
                     if (x509 == null) {
                         return false;
                     }
-                    if (x509.equals(downloadedCert)) {
+                    // Full chain: downloaded cert, every intermediate, root.
+                    X509Certificate[] chain = fullChainFor(downloadedCert, ksChain);
+                    if (x509.equals(downloadedCert) && Arrays.equals(ksChain, chain)) {
                         return false;
                     }
 
@@ -579,13 +674,10 @@ public class ClientKeyStoreCaServiceWrapper {
                         if (privateKey == null) {
                             return false;
                         }
-                        X509Certificate[] chain = {downloadedCert};
-                        // Replace keystore entry with the new downloaded cert and its corresponding key.
-                        // (i.e. replaces the self-signed cert that was used to do the CSR).
-                        // TODO: need to check if the newly issued cert contains only the
-                        // user cert? - what about the eSci CA and root certs in the chain ?
-                        // According to javadoc, "If the given alias already exists, the keystore information
-                        // associated with it is overridden by the given key (and possibly certificate chain)".
+                        // Replace keystore entry with the new downloaded cert, its full
+                        // issuer chain and its corresponding key (i.e. replaces the
+                        // self-signed cert that was used to do the CSR, or a stored
+                        // chain that was missing its intermediate/root certificates).
                         System.out.println("Replacing: [" + keyStoreEntryWrapper.getAlias() + "] with downloaded cert");
 
                         // Synchronize composite action on same lock so that 
@@ -946,7 +1038,11 @@ public class ClientKeyStoreCaServiceWrapper {
                 if (localKeyStoreX509 == null) {
                     return false;
                 }
-                if (localKeyStoreX509.equals(downloadedX509)) { // VALUE equality, not instance equality 
+                // Full chain: downloaded cert, every intermediate, root.
+                X509Certificate[] chain = fullChainFor(downloadedX509, ksChain);
+                // VALUE equality, not instance equality. Same cert but a stored
+                // chain that is missing parents still gets rewritten.
+                if (localKeyStoreX509.equals(downloadedX509) && Arrays.equals(ksChain, chain)) {
                     return false;
                 }
 
@@ -965,13 +1061,10 @@ public class ClientKeyStoreCaServiceWrapper {
                     if (keyStorePrivateKey == null) {
                         return false;
                     }
-                    X509Certificate[] chain = {downloadedX509};
-                    // Replace keystore entry with the new downloaded cert and its corresponding key.
-                    // (i.e. replaces the self-signed cert that was used to do the CSR).
-                    // TODO: need to check if the newly issued cert contains only the
-                    // user cert? - what about the eSci CA and root certs in the chain ?
-                    // According to javadoc, "If the given alias already exists, the keystore information
-                    // associated with it is overridden by the given key (and possibly certificate chain)".
+                    // Replace keystore entry with the new downloaded cert, its full
+                    // issuer chain and its corresponding key (i.e. replaces the
+                    // self-signed cert that was used to do the CSR, or a stored
+                    // chain that was missing its intermediate/root certificates).
                     System.out.println("Replacing: [" + keyStoreEntryWrapper.getAlias() + "] with downloaded cert");
 
                     // Synchronize composite action on same lock so that 
